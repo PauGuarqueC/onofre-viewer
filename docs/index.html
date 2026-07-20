@@ -132,6 +132,15 @@ const VARIABLES = [
   { id: "ros_fli",       label: "ROS / FLI" },
 ];
 
+// Preferència purament visual (no és "dada"): quines variables amaguen
+// el valor 0 en comptes de pintar-lo. Editar aquí, no cal tocar el
+// backend ni regenerar res — és només com es dibuixa, no què es calcula.
+const TRANSPARENT_ZERO = {
+  complexitat: true,
+  piroconveccio: false,
+  ros_fli: true,
+};
+
 const CATALUNYA_CENTER = [41.5, 1.3];
 const CATALUNYA_ZOOM = 8;
 
@@ -290,7 +299,7 @@ async function loadVariable(id) {
   manifest = await res.json();
   manifest._base = base;
 
-  gridLayer.setData(manifest.lon, manifest.lat, manifest.color_bins, manifest.transparent_zero);
+  gridLayer.setData(manifest.lon, manifest.lat, manifest.color_bins, TRANSPARENT_ZERO[id]);
 
   sliderEl.max = manifest.frames.length - 1;
   sliderEl.value = 0;
@@ -463,7 +472,7 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label) {
       const cLon = lon[j];
       if (cLon < crop.lonMin - Math.abs(resLon) || cLon > crop.lonMax + Math.abs(resLon)) continue;
 
-      const color = colorForValue(v, manifest.color_bins, manifest.transparent_zero);
+      const color = colorForValue(v, manifest.color_bins, TRANSPARENT_ZERO[currentVar]);
       if (!color) continue;
 
       const x1 = xPix[j], x2 = xPix[j + 1];
