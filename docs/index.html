@@ -147,8 +147,9 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
 // ─────────────────────────────────────────────────────────────────────────
 // CAPA DE GRAELLA (dibuixa cada cel·la amb <canvas>, sempre nítida)
 // ─────────────────────────────────────────────────────────────────────────
-function colorForValue(v, colorBins) {
+function colorForValue(v, colorBins, transparentZero) {
   if (v === null || v === undefined) return null;
+  if (transparentZero && v === 0) return null;
   for (const bin of colorBins) {
     if (v <= bin.max) return bin.color;
   }
@@ -175,8 +176,9 @@ const GridLayer = L.Layer.extend({
     this._canvas.height = size.y;
     this.draw();
   },
-  setData(lon, lat, colorBins) {
+  setData(lon, lat, colorBins, transparentZero) {
     this._lon = lon; this._lat = lat; this._colorBins = colorBins;
+    this._transparentZero = !!transparentZero;
   },
   setFrame(values) {
     this._values = values;
@@ -203,13 +205,17 @@ const GridLayer = L.Layer.extend({
         const cLon = lon[j];
         if (cLon < bounds.getWest() - Math.abs(resLon) || cLon > bounds.getEast() + Math.abs(resLon)) continue;
 
-        const color = colorForValue(v, this._colorBins);
+        const color = colorForValue(v, this._colorBins, this._transparentZero);
         if (!color) continue;
 
         const p1 = this._map.latLngToContainerPoint([cLat - resLat / 2, cLon - resLon / 2]);
         const p2 = this._map.latLngToContainerPoint([cLat + resLat / 2, cLon + resLon / 2]);
-        const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
-        const w = Math.abs(p2.x - p1.x) + 1, h = Math.abs(p2.y - p1.y) + 1;
+        // floor/ceil (no round) perquè les cel·les veïnes se solapin lleugerament
+        // en comptes de deixar escletxes d'un subpíxel entre elles.
+        const x = Math.floor(Math.min(p1.x, p2.x));
+        const y = Math.floor(Math.min(p1.y, p2.y));
+        const w = Math.ceil(Math.abs(p2.x - p1.x)) + 1;
+        const h = Math.ceil(Math.abs(p2.y - p1.y)) + 1;
 
         ctx.fillStyle = color;
         ctx.fillRect(x, y, w, h);
@@ -272,7 +278,7 @@ async function loadVariable(id) {
   manifest = await res.json();
   manifest._base = base;
 
-  gridLayer.setData(manifest.lon, manifest.lat, manifest.color_bins);
+  gridLayer.setData(manifest.lon, manifest.lat, manifest.color_bins, manifest.transparent_zero);
 
   sliderEl.max = manifest.frames.length - 1;
   sliderEl.value = 0;
@@ -430,13 +436,17 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label) {
       const cLon = lon[j];
       if (cLon < crop.lonMin - Math.abs(resLon) || cLon > crop.lonMax + Math.abs(resLon)) continue;
 
-      const color = colorForValue(v, manifest.color_bins);
+      const color = colorForValue(v, manifest.color_bins, manifest.transparent_zero);
       if (!color) continue;
 
       const x1 = xForLon(cLon - resLon / 2), x2 = xForLon(cLon + resLon / 2);
       const y1 = yForLat(cLat + resLat / 2), y2 = yForLat(cLat - resLat / 2);
+      const x = Math.floor(Math.min(x1, x2));
+      const y = Math.floor(Math.min(y1, y2));
+      const w = Math.ceil(Math.abs(x2 - x1)) + 1;
+      const h = Math.ceil(Math.abs(y2 - y1)) + 1;
       ctx.fillStyle = color;
-      ctx.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1) + 1, Math.abs(y2 - y1) + 1);
+      ctx.fillRect(x, y, w, h);
     }
   }
 

@@ -68,6 +68,7 @@ VARIABLES = {
         norm=norm_complexitat,
         legend_labels=["0", "1", "2", "3", "4", "5", "6"],
         decimals=0,
+        transparent_zero=True,  # el 0 (sense activitat) no es dibuixa, es veu el mapa de sota
     ),
     "piroconveccio": dict(
         title="Tipus de piroconvecció",
@@ -223,6 +224,7 @@ def generate_variable(var_id, data_list, lon, lat, times, run_tag,
         "title": cfg["title"],
         "domain": cfg["domain"],
         "domain_note": cfg.get("domain_note"),
+        "transparent_zero": cfg.get("transparent_zero", False),
         "run": run_tag,
         "legend_labels": cfg["legend_labels"],
         "color_bins": cmap_to_bins(cfg["cmap"], cfg["norm"]),
