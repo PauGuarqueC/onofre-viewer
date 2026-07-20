@@ -113,7 +113,10 @@ def build_polygon_mask(lon, lat, geoms):
     )
     mask_outside = geometry_mask(
         geoms, out_shape=(len(lat), len(lon)),
-        transform=transform, invert=False  # True = FORA del polígon
+        transform=transform, invert=False,  # True = FORA del polígon
+        all_touched=True,  # una cel·la compta com a "dins" si el polígon la
+                            # toca en qualsevol part, no només pel centre —
+                            # evita perdre cel·les de costa que són majoritàriament terra
     )
     if lat[0] < lat[-1]:
         mask_outside = mask_outside[::-1, :]
@@ -122,7 +125,7 @@ def build_polygon_mask(lon, lat, geoms):
 
 _land_geoms_cache = {}
 
-def build_land_mask(lon, lat, resolution="50m"):
+def build_land_mask(lon, lat, resolution="10m"):
     """
     Màscara terra/mar a partir de Natural Earth (via cartopy), no d'un
     shapefile administratiu concret — vàlida tant per Catalunya com per
