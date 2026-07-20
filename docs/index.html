@@ -151,7 +151,7 @@ function colorForValue(v, colorBins, transparentZero) {
   if (v === null || v === undefined) return null;
   if (transparentZero && v === 0) return null;
   for (const bin of colorBins) {
-    if (v <= bin.max) return bin.color;
+    if (v < bin.max) return bin.color;
   }
   return colorBins[colorBins.length - 1].color;
 }
