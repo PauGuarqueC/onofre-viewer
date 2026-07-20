@@ -18,6 +18,7 @@
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
                font-family: "Segoe UI", Roboto, sans-serif; }
   #map { position: absolute; inset: 0; }
+  .grid-canvas-layer { pointer-events: none; }
 
   #topbar {
     position: absolute; top: 12px; left: 12px; right: 12px; z-index: 1000;
@@ -34,10 +35,12 @@
     padding: 7px 12px; border-radius: 7px; cursor: pointer; font-size: 13px;
   }
   .var-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .var-btn:disabled { opacity: .35; cursor: not-allowed; }
 
   #domainNote { font-size: 12px; color: var(--muted); margin-top: 6px; max-width: 260px; }
-  #legend { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  #legend { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+  .legend-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; border: 1px solid rgba(255,255,255,.15); }
 
   #bottombar {
     position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 1000;
@@ -62,9 +65,7 @@
   .dl-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   .dl-btn:disabled { opacity: .35; cursor: not-allowed; }
 
-  #viewportPanel {
-    pointer-events: auto; min-width: 240px;
-  }
+  #viewportPanel { pointer-events: auto; min-width: 240px; }
   #viewportPanel h4 { margin: 0 0 8px 0; font-size: 12px; color: var(--muted);
                        text-transform: uppercase; letter-spacing: .04em; }
   #daysRow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -132,7 +133,7 @@ const VARIABLES = [
 ];
 
 const CATALUNYA_CENTER = [41.5, 1.3];
-const CATALUNYA_ZOOM = 7;
+const CATALUNYA_ZOOM = 8;
 
 // ─────────────────────────────────────────────────────────────────────────
 // MAPA BASE
@@ -140,10 +141,86 @@ const CATALUNYA_ZOOM = 7;
 const map = L.map("map", { zoomControl: true }).setView(CATALUNYA_CENTER, CATALUNYA_ZOOM);
 L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
   attribution: "&copy; OpenStreetMap &copy; CARTO",
-  maxZoom: 12,
+  maxZoom: 14,
 }).addTo(map);
 
-let currentOverlay = null;
+// ─────────────────────────────────────────────────────────────────────────
+// CAPA DE GRAELLA (dibuixa cada cel·la amb <canvas>, sempre nítida)
+// ─────────────────────────────────────────────────────────────────────────
+function colorForValue(v, colorBins) {
+  if (v === null || v === undefined) return null;
+  for (const bin of colorBins) {
+    if (v <= bin.max) return bin.color;
+  }
+  return colorBins[colorBins.length - 1].color;
+}
+
+const GridLayer = L.Layer.extend({
+  onAdd(map) {
+    this._map = map;
+    this._canvas = L.DomUtil.create("canvas", "grid-canvas-layer");
+    map.getPanes().overlayPane.appendChild(this._canvas);
+    map.on("moveend zoomend resize", this._reset, this);
+    this._reset();
+  },
+  onRemove(map) {
+    L.DomUtil.remove(this._canvas);
+    map.off("moveend zoomend resize", this._reset, this);
+  },
+  _reset() {
+    const size = this._map.getSize();
+    const topLeft = this._map.containerPointToLayerPoint([0, 0]);
+    L.DomUtil.setPosition(this._canvas, topLeft);
+    this._canvas.width = size.x;
+    this._canvas.height = size.y;
+    this.draw();
+  },
+  setData(lon, lat, colorBins) {
+    this._lon = lon; this._lat = lat; this._colorBins = colorBins;
+  },
+  setFrame(values) {
+    this._values = values;
+    this.draw();
+  },
+  draw() {
+    if (!this._map || !this._values || !this._lon) return;
+    const ctx = this._canvas.getContext("2d");
+    ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
+
+    const lon = this._lon, lat = this._lat, values = this._values;
+    const resLon = lon.length > 1 ? lon[1] - lon[0] : 0.0625;
+    const resLat = lat.length > 1 ? lat[1] - lat[0] : 0.0625;
+    const bounds = this._map.getBounds().pad(0.15);
+
+    ctx.globalAlpha = 0.85;
+    for (let i = 0; i < lat.length; i++) {
+      const cLat = lat[i];
+      if (cLat < bounds.getSouth() - Math.abs(resLat) || cLat > bounds.getNorth() + Math.abs(resLat)) continue;
+      const row = values[i];
+      for (let j = 0; j < lon.length; j++) {
+        const v = row[j];
+        if (v === null) continue;
+        const cLon = lon[j];
+        if (cLon < bounds.getWest() - Math.abs(resLon) || cLon > bounds.getEast() + Math.abs(resLon)) continue;
+
+        const color = colorForValue(v, this._colorBins);
+        if (!color) continue;
+
+        const p1 = this._map.latLngToContainerPoint([cLat - resLat / 2, cLon - resLon / 2]);
+        const p2 = this._map.latLngToContainerPoint([cLat + resLat / 2, cLon + resLon / 2]);
+        const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
+        const w = Math.abs(p2.x - p1.x) + 1, h = Math.abs(p2.y - p1.y) + 1;
+
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, w, h);
+      }
+    }
+  },
+});
+
+const gridLayer = new GridLayer();
+gridLayer.addTo(map);
+
 let currentVar = null;
 let manifest = null;
 let playing = false;
@@ -183,7 +260,7 @@ function setActiveButton(id) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// CÀRREGA DE VARIABLE (manifest.json)
+// CÀRREGA DE VARIABLE (manifest.json amb lon/lat/color_bins/frames)
 // ─────────────────────────────────────────────────────────────────────────
 async function loadVariable(id) {
   setActiveButton(id);
@@ -195,51 +272,48 @@ async function loadVariable(id) {
   manifest = await res.json();
   manifest._base = base;
 
+  gridLayer.setData(manifest.lon, manifest.lat, manifest.color_bins);
+
   sliderEl.max = manifest.frames.length - 1;
   sliderEl.value = 0;
   renderFrame(0);
 
-  domainNoteEl.textContent = manifest.domain === "catalunya"
-    ? "⚠ Nomès cobertura Catalunya (humitat de combustible no calculada per a la resta d'Europa)."
-    : "Cobertura Europa (ICON-EU).";
-
-  renderLegend(manifest.legend_labels);
+  domainNoteEl.textContent = manifest.domain_note || "";
+  renderLegend(manifest.color_bins, manifest.legend_labels);
   updateDaysControl();
   updateCoverageWarning();
 
   dlMosaic.href = `${base}/mosaic.png`;
   dlGif.href = `${base}/animation.gif`;
 
-  if (manifest.domain === "catalunya") {
-    map.setView(CATALUNYA_CENTER, CATALUNYA_ZOOM);
-  }
+  map.setView(CATALUNYA_CENTER, CATALUNYA_ZOOM);
 }
 
-function renderLegend(labels) {
+function renderLegend(colorBins, labels) {
   legendEl.innerHTML = "";
-  if (!labels) return;
-  labels.forEach(l => {
-    const span = document.createElement("div");
-    span.textContent = l;
-    legendEl.appendChild(span);
+  if (!colorBins) return;
+  colorBins.forEach((bin, i) => {
+    const row = document.createElement("div");
+    row.className = "legend-row";
+    const sw = document.createElement("div");
+    sw.className = "legend-swatch";
+    sw.style.background = bin.color;
+    const lbl = document.createElement("span");
+    lbl.textContent = (labels && labels[i]) ? labels[i] : `≤ ${bin.max}`;
+    row.appendChild(sw);
+    row.appendChild(lbl);
+    legendEl.appendChild(row);
   });
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// RENDER DE FRAME (al mapa)
+// RENDER DE FRAME
 // ─────────────────────────────────────────────────────────────────────────
 function renderFrame(i) {
   if (!manifest) return;
   const frame = manifest.frames[i];
   if (!frame) return;
-
-  if (currentOverlay) map.removeLayer(currentOverlay);
-  currentOverlay = L.imageOverlay(
-    `${manifest._base}/${frame.file}`,
-    frame.bounds,
-    { opacity: 0.85 }
-  ).addTo(map);
-
+  gridLayer.setFrame(frame.values);
   labelEl.textContent = new Date(frame.time).toLocaleString("ca-ES", {
     day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
   }) + "Z";
@@ -276,7 +350,7 @@ function updateDaysControl() {
   if (!manifest || manifest.frames.length < 2) return;
   const t0 = new Date(manifest.frames[0].time).getTime();
   const t1 = new Date(manifest.frames[manifest.frames.length - 1].time).getTime();
-  const maxDays = Math.max(1, Math.round((t1 - t0) / 86400000 * 10) / 10);
+  const maxDays = Math.max(0.5, Math.round((t1 - t0) / 86400000 * 10) / 10);
   daysSlider.min = 0.5;
   daysSlider.max = maxDays;
   daysSlider.step = 0.5;
@@ -295,93 +369,93 @@ function framesInRange(days) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// PROJECCIÓ: lon/lat ↔ Web Mercator (mateixa que fan servir els frames)
+// COBERTURA: intersecció simple lat/lng (ja no cal Web Mercator, treballem
+// directament amb la graella en EPSG:4326)
 // ─────────────────────────────────────────────────────────────────────────
-const EARTH_R = 6378137;
-
-function lonLatToMerc(lon, lat) {
-  const x = EARTH_R * (lon * Math.PI / 180);
-  const y = EARTH_R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2));
-  return [x, y];
+function getDomainBoundsLatLng() {
+  const lon = manifest.lon, lat = manifest.lat;
+  return {
+    latMin: Math.min(...lat), latMax: Math.max(...lat),
+    lonMin: Math.min(...lon), lonMax: Math.max(...lon),
+  };
 }
 
-function getDomainBoundsMerc() {
-  // el domini és el mateix a tots els frames (mateixa graella d'origen)
-  const b = manifest.frames[0].bounds; // [[latMin,lonMin],[latMax,lonMax]]
-  const [xMin, yMin] = lonLatToMerc(b[0][1], b[0][0]);
-  const [xMax, yMax] = lonLatToMerc(b[1][1], b[1][0]);
-  return { xMin, yMin, xMax, yMax };
-}
-
-function getViewportBoundsMerc() {
-  const b = map.getBounds();
-  const sw = b.getSouthWest(), ne = b.getNorthEast();
-  const [xMin, yMin] = lonLatToMerc(sw.lng, sw.lat);
-  const [xMax, yMax] = lonLatToMerc(ne.lng, ne.lat);
-  return { xMin, yMin, xMax, yMax };
-}
-
-function intersectBounds(a, b) {
-  const xMin = Math.max(a.xMin, b.xMin);
-  const xMax = Math.min(a.xMax, b.xMax);
-  const yMin = Math.max(a.yMin, b.yMin);
-  const yMax = Math.min(a.yMax, b.yMax);
-  if (xMin >= xMax || yMin >= yMax) return null;
-  return { xMin, yMin, xMax, yMax };
+function getCropBounds() {
+  const dom = getDomainBoundsLatLng();
+  const vb = map.getBounds();
+  const latMin = Math.max(dom.latMin, vb.getSouth());
+  const latMax = Math.min(dom.latMax, vb.getNorth());
+  const lonMin = Math.max(dom.lonMin, vb.getWest());
+  const lonMax = Math.min(dom.lonMax, vb.getEast());
+  if (latMin >= latMax || lonMin >= lonMax) return null;
+  return { latMin, latMax, lonMin, lonMax };
 }
 
 function updateCoverageWarning() {
   if (!manifest) return;
-  const cropOk = intersectBounds(getDomainBoundsMerc(), getViewportBoundsMerc());
-  coverageWarnEl.style.display = cropOk ? "none" : "block";
-  btnViewMosaic.disabled = !cropOk;
-  btnViewGif.disabled = !cropOk;
+  const crop = getCropBounds();
+  coverageWarnEl.style.display = crop ? "none" : "block";
+  btnViewMosaic.disabled = !crop;
+  btnViewGif.disabled = !crop;
 }
 
 map.on("moveend zoomend", updateCoverageWarning);
 
 // ─────────────────────────────────────────────────────────────────────────
-// RETALL D'UN FRAME A LA FINESTRA ACTUAL (canvas)
+// DIBUIX DIRECTE DE LA GRAELLA A UN CANVAS DE MIDA ARBITRÀRIA
+// (projecció equirectangular senzilla — mateixa filosofia que els mapes
+// PlateCarree que ja fas servir a plot_time_mosaic_gridspec)
 // ─────────────────────────────────────────────────────────────────────────
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = src;
-  });
-}
-
-async function cropFrameToCanvas(frame, domainMerc, cropMerc, destW, destH) {
-  const img = await loadImage(`${manifest._base}/${frame.file}`);
+function drawGridToCanvas(frameValues, crop, destW, destH, label) {
   const canvas = document.createElement("canvas");
-  canvas.width = destW;
-  canvas.height = destH;
+  canvas.width = destW; canvas.height = destH;
   const ctx = canvas.getContext("2d");
-
-  const domW = domainMerc.xMax - domainMerc.xMin;
-  const domH = domainMerc.yMax - domainMerc.yMin;
-
-  const sx     = (cropMerc.xMin - domainMerc.xMin) / domW * img.naturalWidth;
-  const sxEnd  = (cropMerc.xMax - domainMerc.xMin) / domW * img.naturalWidth;
-  const syTop  = (domainMerc.yMax - cropMerc.yMax) / domH * img.naturalHeight;
-  const syBot  = (domainMerc.yMax - cropMerc.yMin) / domH * img.naturalHeight;
-
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, destW, destH);
-  ctx.drawImage(img, sx, syTop, sxEnd - sx, syBot - syTop, 0, 0, destW, destH);
 
-  const label = new Date(frame.time).toLocaleString("ca-ES", {
-    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
-  }) + "Z";
-  ctx.font = "bold 15px sans-serif";
-  const tw = ctx.measureText(label).width;
-  ctx.fillStyle = "rgba(0,0,0,0.72)";
-  ctx.fillRect(6, destH - 26, tw + 12, 20);
-  ctx.fillStyle = "#fff";
-  ctx.fillText(label, 12, destH - 11);
+  const lon = manifest.lon, lat = manifest.lat;
+  const resLon = lon.length > 1 ? lon[1] - lon[0] : 0.0625;
+  const resLat = lat.length > 1 ? lat[1] - lat[0] : 0.0625;
+
+  const xForLon = (lo) => (lo - crop.lonMin) / (crop.lonMax - crop.lonMin) * destW;
+  const yForLat = (la) => (crop.latMax - la) / (crop.latMax - crop.latMin) * destH;
+
+  for (let i = 0; i < lat.length; i++) {
+    const cLat = lat[i];
+    if (cLat < crop.latMin - Math.abs(resLat) || cLat > crop.latMax + Math.abs(resLat)) continue;
+    const row = frameValues[i];
+    for (let j = 0; j < lon.length; j++) {
+      const v = row[j];
+      if (v === null) continue;
+      const cLon = lon[j];
+      if (cLon < crop.lonMin - Math.abs(resLon) || cLon > crop.lonMax + Math.abs(resLon)) continue;
+
+      const color = colorForValue(v, manifest.color_bins);
+      if (!color) continue;
+
+      const x1 = xForLon(cLon - resLon / 2), x2 = xForLon(cLon + resLon / 2);
+      const y1 = yForLat(cLat + resLat / 2), y2 = yForLat(cLat - resLat / 2);
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1) + 1, Math.abs(y2 - y1) + 1);
+    }
+  }
+
+  if (label) {
+    ctx.font = "bold 15px sans-serif";
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = "rgba(0,0,0,0.72)";
+    ctx.fillRect(6, destH - 26, tw + 12, 20);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(label, 12, destH - 11);
+  }
 
   return canvas;
+}
+
+function timeLabelFor(frame) {
+  return new Date(frame.time).toLocaleString("ca-ES", {
+    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+  }) + "Z";
 }
 
 function triggerDownload(blob, filename) {
@@ -397,11 +471,10 @@ function setStatus(msg) { statusMsgEl.textContent = msg; }
 // ─────────────────────────────────────────────────────────────────────────
 // DESCÀRREGA: MOSAIC PNG DE LA VISTA ACTUAL
 // ─────────────────────────────────────────────────────────────────────────
-btnViewMosaic.onclick = async () => {
+btnViewMosaic.onclick = () => {
   if (!manifest) return;
-  const domainMerc = getDomainBoundsMerc();
-  const cropMerc = intersectBounds(domainMerc, getViewportBoundsMerc());
-  if (!cropMerc) return;
+  const crop = getCropBounds();
+  if (!crop) return;
 
   const days = parseFloat(daysSlider.value);
   const frames = framesInRange(days);
@@ -421,29 +494,24 @@ btnViewMosaic.onclick = async () => {
   ctx.font = "bold 20px sans-serif";
   ctx.fillText(`${manifest.title} — vista personalitzada`, 10, 30);
 
-  for (let i = 0; i < frames.length; i++) {
-    setStatus(`Generant mosaic (${i + 1}/${frames.length})...`);
-    const cell = await cropFrameToCanvas(frames[i], domainMerc, cropMerc, cellW - 4, cellH - 4);
+  frames.forEach((frame, i) => {
+    const cell = drawGridToCanvas(frame.values, crop, cellW - 4, cellH - 4, timeLabelFor(frame));
     const r = Math.floor(i / cols), c = i % cols;
     ctx.strokeStyle = "#ddd";
     ctx.strokeRect(c * cellW, titleH + r * cellH, cellW, cellH);
     ctx.drawImage(cell, c * cellW + 2, titleH + r * cellH + 2);
-  }
-
-  outCanvas.toBlob(blob => {
-    triggerDownload(blob, `${currentVar}_vista_${Date.now()}.png`);
-    setStatus("");
   });
+
+  outCanvas.toBlob(blob => triggerDownload(blob, `${currentVar}_vista_${Date.now()}.png`));
 };
 
 // ─────────────────────────────────────────────────────────────────────────
 // DESCÀRREGA: GIF DE LA VISTA ACTUAL
 // ─────────────────────────────────────────────────────────────────────────
-btnViewGif.onclick = async () => {
+btnViewGif.onclick = () => {
   if (!manifest) return;
-  const domainMerc = getDomainBoundsMerc();
-  const cropMerc = intersectBounds(domainMerc, getViewportBoundsMerc());
-  if (!cropMerc) return;
+  const crop = getCropBounds();
+  if (!crop) return;
 
   const days = parseFloat(daysSlider.value);
   const frames = framesInRange(days);
@@ -459,11 +527,11 @@ btnViewGif.onclick = async () => {
     workerScript: "./vendor/gif.worker.js",
   });
 
-  for (let i = 0; i < frames.length; i++) {
-    const canvas = await cropFrameToCanvas(frames[i], domainMerc, cropMerc, 480, 360);
+  frames.forEach((frame, i) => {
+    const canvas = drawGridToCanvas(frame.values, crop, 480, 360, timeLabelFor(frame));
     gif.addFrame(canvas, { delay: 500 });
     setStatus(`Generant GIF (${i + 1}/${frames.length})...`);
-  }
+  });
 
   gif.on("finished", blob => {
     triggerDownload(blob, `${currentVar}_vista_${Date.now()}.gif`);
