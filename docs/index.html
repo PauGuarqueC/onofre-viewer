@@ -194,11 +194,31 @@ const GridLayer = L.Layer.extend({
     const resLat = lat.length > 1 ? lat[1] - lat[0] : 0.0625;
     const bounds = this._map.getBounds().pad(0.15);
 
+    // Vores de la graella (nlon+1 / nlat+1 valors), calculades UN COP i
+    // compartides entre cel·les veïnes — així dues cel·les contigües
+    // encaixen exactament pel mateix píxel, sense ni escletxa ni
+    // solapament (que amb alpha<1 es veia com una línia de color barrejat).
+    // En Web Mercator (la projecció de Leaflet), x només depèn de lon i
+    // y només depèn de lat, així que això és exacte, no una aproximació.
+    const refLat = lat[0], refLon = lon[0];
+    const xPix = new Array(lon.length + 1);
+    for (let j = 0; j <= lon.length; j++) {
+      const edgeLon = j < lon.length ? lon[j] - resLon / 2 : lon[lon.length - 1] + resLon / 2;
+      xPix[j] = Math.round(this._map.latLngToContainerPoint([refLat, edgeLon]).x);
+    }
+    const yPix = new Array(lat.length + 1);
+    for (let i = 0; i <= lat.length; i++) {
+      const edgeLat = i < lat.length ? lat[i] - resLat / 2 : lat[lat.length - 1] + resLat / 2;
+      yPix[i] = Math.round(this._map.latLngToContainerPoint([edgeLat, refLon]).y);
+    }
+
     ctx.globalAlpha = 0.85;
     for (let i = 0; i < lat.length; i++) {
       const cLat = lat[i];
       if (cLat < bounds.getSouth() - Math.abs(resLat) || cLat > bounds.getNorth() + Math.abs(resLat)) continue;
       const row = values[i];
+      const y1 = yPix[i], y2 = yPix[i + 1];
+      const y = Math.min(y1, y2), h = Math.abs(y2 - y1);
       for (let j = 0; j < lon.length; j++) {
         const v = row[j];
         if (v === null) continue;
@@ -208,17 +228,9 @@ const GridLayer = L.Layer.extend({
         const color = colorForValue(v, this._colorBins, this._transparentZero);
         if (!color) continue;
 
-        const p1 = this._map.latLngToContainerPoint([cLat - resLat / 2, cLon - resLon / 2]);
-        const p2 = this._map.latLngToContainerPoint([cLat + resLat / 2, cLon + resLon / 2]);
-        // floor/ceil (no round) perquè les cel·les veïnes se solapin lleugerament
-        // en comptes de deixar escletxes d'un subpíxel entre elles.
-        const x = Math.floor(Math.min(p1.x, p2.x));
-        const y = Math.floor(Math.min(p1.y, p2.y));
-        const w = Math.ceil(Math.abs(p2.x - p1.x)) + 1;
-        const h = Math.ceil(Math.abs(p2.y - p1.y)) + 1;
-
+        const x1 = xPix[j], x2 = xPix[j + 1];
         ctx.fillStyle = color;
-        ctx.fillRect(x, y, w, h);
+        ctx.fillRect(Math.min(x1, x2), y, Math.abs(x2 - x1), h);
       }
     }
   },
@@ -426,10 +438,25 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label) {
   const xForLon = (lo) => (lo - crop.lonMin) / (crop.lonMax - crop.lonMin) * destW;
   const yForLat = (la) => (crop.latMax - la) / (crop.latMax - crop.latMin) * destH;
 
+  // Vores compartides (mateix motiu que a GridLayer.draw): evita que
+  // cel·les veïnes es solapin o deixin escletxa.
+  const xPix = new Array(lon.length + 1);
+  for (let j = 0; j <= lon.length; j++) {
+    const edgeLon = j < lon.length ? lon[j] - resLon / 2 : lon[lon.length - 1] + resLon / 2;
+    xPix[j] = Math.round(xForLon(edgeLon));
+  }
+  const yPix = new Array(lat.length + 1);
+  for (let i = 0; i <= lat.length; i++) {
+    const edgeLat = i < lat.length ? lat[i] - resLat / 2 : lat[lat.length - 1] + resLat / 2;
+    yPix[i] = Math.round(yForLat(edgeLat));
+  }
+
   for (let i = 0; i < lat.length; i++) {
     const cLat = lat[i];
     if (cLat < crop.latMin - Math.abs(resLat) || cLat > crop.latMax + Math.abs(resLat)) continue;
     const row = frameValues[i];
+    const y1 = yPix[i], y2 = yPix[i + 1];
+    const y = Math.min(y1, y2), h = Math.abs(y2 - y1);
     for (let j = 0; j < lon.length; j++) {
       const v = row[j];
       if (v === null) continue;
@@ -439,14 +466,9 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label) {
       const color = colorForValue(v, manifest.color_bins, manifest.transparent_zero);
       if (!color) continue;
 
-      const x1 = xForLon(cLon - resLon / 2), x2 = xForLon(cLon + resLon / 2);
-      const y1 = yForLat(cLat + resLat / 2), y2 = yForLat(cLat - resLat / 2);
-      const x = Math.floor(Math.min(x1, x2));
-      const y = Math.floor(Math.min(y1, y2));
-      const w = Math.ceil(Math.abs(x2 - x1)) + 1;
-      const h = Math.ceil(Math.abs(y2 - y1)) + 1;
+      const x1 = xPix[j], x2 = xPix[j + 1];
       ctx.fillStyle = color;
-      ctx.fillRect(x, y, w, h);
+      ctx.fillRect(Math.min(x1, x2), y, Math.abs(x2 - x1), h);
     }
   }
 
