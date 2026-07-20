@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="UTF-8">
+<title>ONOFRE — Visor de pronòstic</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --bg: #0f1418;
+    --panel: #171e24;
+    --border: #2a343c;
+    --text: #e8edf1;
+    --muted: #8fa1ac;
+    --accent: #ff6b35;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+               font-family: "Segoe UI", Roboto, sans-serif; }
+  #map { position: absolute; inset: 0; }
+
+  #topbar {
+    position: absolute; top: 12px; left: 12px; right: 12px; z-index: 1000;
+    display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap;
+    pointer-events: none;
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; pointer-events: auto; box-shadow: 0 4px 14px rgba(0,0,0,.35);
+  }
+  #varSelect { display: flex; gap: 6px; }
+  .var-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--muted);
+    padding: 7px 12px; border-radius: 7px; cursor: pointer; font-size: 13px;
+  }
+  .var-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .var-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+  #domainNote { font-size: 12px; color: var(--muted); margin-top: 6px; max-width: 260px; }
+  #legend { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  #bottombar {
+    position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 1000;
+    display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+    pointer-events: none;
+  }
+  #timePanel { flex: 1; min-width: 260px; pointer-events: auto; }
+  #timeRow { display: flex; align-items: center; gap: 10px; }
+  #playBtn {
+    background: var(--accent); border: none; color: #fff; width: 34px; height: 34px;
+    border-radius: 50%; cursor: pointer; font-size: 14px; flex-shrink: 0;
+  }
+  #timeSlider { flex: 1; }
+  #timeLabel { font-size: 13px; color: var(--muted); min-width: 130px; text-align: right; }
+
+  #downloadPanel { pointer-events: auto; display: flex; gap: 8px; }
+  .dl-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+    text-decoration: none; display: inline-block; font-family: inherit;
+  }
+  .dl-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .dl-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+  #viewportPanel {
+    pointer-events: auto; min-width: 240px;
+  }
+  #viewportPanel h4 { margin: 0 0 8px 0; font-size: 12px; color: var(--muted);
+                       text-transform: uppercase; letter-spacing: .04em; }
+  #daysRow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  #daysRow input[type=range] { flex: 1; }
+  #daysLabel { font-size: 12px; color: var(--muted); min-width: 55px; text-align: right; }
+  #viewportBtns { display: flex; gap: 8px; }
+  #statusMsg { font-size: 11px; color: var(--accent); margin-top: 6px; min-height: 14px; }
+  #coverageWarn { font-size: 11px; color: #ff9f6b; margin-top: 4px; display: none; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="topbar">
+  <div class="panel">
+    <div id="varSelect"></div>
+    <div id="domainNote"></div>
+    <div id="legend"></div>
+  </div>
+</div>
+
+<div id="bottombar">
+  <div class="panel" id="timePanel">
+    <div id="timeRow">
+      <button id="playBtn">▶</button>
+      <input type="range" id="timeSlider" min="0" max="0" value="0" step="1">
+      <span id="timeLabel">—</span>
+    </div>
+  </div>
+
+  <div class="panel" id="viewportPanel">
+    <h4>Descarrega la vista actual</h4>
+    <div id="daysRow">
+      <input type="range" id="daysSlider" min="1" max="1" value="1" step="1">
+      <span id="daysLabel">— dies</span>
+    </div>
+    <div id="viewportBtns">
+      <button class="dl-btn" id="btnViewMosaic">📷 Mosaic PNG</button>
+      <button class="dl-btn" id="btnViewGif">🎞 GIF</button>
+    </div>
+    <div id="statusMsg"></div>
+    <div id="coverageWarn">⚠ La vista actual no coincideix amb la cobertura d'aquesta variable.</div>
+  </div>
+
+  <div class="panel" id="downloadPanel">
+    <a class="dl-btn" id="dlMosaic" href="#" download>⬇ Mapa oficial (PNG)</a>
+    <a class="dl-btn" id="dlGif" href="#" download>⬇ Animació oficial (GIF)</a>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="./vendor/gif.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────────────────
+// CONFIGURACIÓ
+// ─────────────────────────────────────────────────────────────────────────
+const DATA_ROOT = "./data";
+const RUN_TAG = "latest";
+
+const VARIABLES = [
+  { id: "complexitat",   label: "Complexitat (Finestra IF)" },
+  { id: "piroconveccio", label: "Tipus de piroconvecció" },
+  { id: "ros_fli",       label: "ROS / FLI" },
+];
+
+const CATALUNYA_CENTER = [41.5, 1.3];
+const CATALUNYA_ZOOM = 7;
+
+// ─────────────────────────────────────────────────────────────────────────
+// MAPA BASE
+// ─────────────────────────────────────────────────────────────────────────
+const map = L.map("map", { zoomControl: true }).setView(CATALUNYA_CENTER, CATALUNYA_ZOOM);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: "&copy; OpenStreetMap &copy; CARTO",
+  maxZoom: 12,
+}).addTo(map);
+
+let currentOverlay = null;
+let currentVar = null;
+let manifest = null;
+let playing = false;
+let playTimer = null;
+
+const varSelectEl   = document.getElementById("varSelect");
+const domainNoteEl  = document.getElementById("domainNote");
+const legendEl      = document.getElementById("legend");
+const sliderEl       = document.getElementById("timeSlider");
+const labelEl        = document.getElementById("timeLabel");
+const playBtn        = document.getElementById("playBtn");
+const dlMosaic        = document.getElementById("dlMosaic");
+const dlGif           = document.getElementById("dlGif");
+const daysSlider      = document.getElementById("daysSlider");
+const daysLabel       = document.getElementById("daysLabel");
+const btnViewMosaic   = document.getElementById("btnViewMosaic");
+const btnViewGif      = document.getElementById("btnViewGif");
+const statusMsgEl     = document.getElementById("statusMsg");
+const coverageWarnEl  = document.getElementById("coverageWarn");
+
+// ─────────────────────────────────────────────────────────────────────────
+// SELECTOR DE VARIABLE
+// ─────────────────────────────────────────────────────────────────────────
+VARIABLES.forEach(v => {
+  const btn = document.createElement("button");
+  btn.className = "var-btn";
+  btn.textContent = v.label;
+  btn.dataset.id = v.id;
+  btn.onclick = () => loadVariable(v.id);
+  varSelectEl.appendChild(btn);
+});
+
+function setActiveButton(id) {
+  document.querySelectorAll(".var-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.id === id);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CÀRREGA DE VARIABLE (manifest.json)
+// ─────────────────────────────────────────────────────────────────────────
+async function loadVariable(id) {
+  setActiveButton(id);
+  currentVar = id;
+  stopPlaying();
+
+  const base = `${DATA_ROOT}/${id}/${RUN_TAG}`;
+  const res = await fetch(`${base}/manifest.json`);
+  manifest = await res.json();
+  manifest._base = base;
+
+  sliderEl.max = manifest.frames.length - 1;
+  sliderEl.value = 0;
+  renderFrame(0);
+
+  domainNoteEl.textContent = manifest.domain === "catalunya"
+    ? "⚠ Nomès cobertura Catalunya (humitat de combustible no calculada per a la resta d'Europa)."
+    : "Cobertura Europa (ICON-EU).";
+
+  renderLegend(manifest.legend_labels);
+  updateDaysControl();
+  updateCoverageWarning();
+
+  dlMosaic.href = `${base}/mosaic.png`;
+  dlGif.href = `${base}/animation.gif`;
+
+  if (manifest.domain === "catalunya") {
+    map.setView(CATALUNYA_CENTER, CATALUNYA_ZOOM);
+  }
+}
+
+function renderLegend(labels) {
+  legendEl.innerHTML = "";
+  if (!labels) return;
+  labels.forEach(l => {
+    const span = document.createElement("div");
+    span.textContent = l;
+    legendEl.appendChild(span);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RENDER DE FRAME (al mapa)
+// ─────────────────────────────────────────────────────────────────────────
+function renderFrame(i) {
+  if (!manifest) return;
+  const frame = manifest.frames[i];
+  if (!frame) return;
+
+  if (currentOverlay) map.removeLayer(currentOverlay);
+  currentOverlay = L.imageOverlay(
+    `${manifest._base}/${frame.file}`,
+    frame.bounds,
+    { opacity: 0.85 }
+  ).addTo(map);
+
+  labelEl.textContent = new Date(frame.time).toLocaleString("ca-ES", {
+    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+  }) + "Z";
+}
+
+sliderEl.addEventListener("input", () => renderFrame(parseInt(sliderEl.value, 10)));
+
+// ─────────────────────────────────────────────────────────────────────────
+// PLAY / PAUSE
+// ─────────────────────────────────────────────────────────────────────────
+playBtn.onclick = () => (playing ? stopPlaying() : startPlaying());
+
+function startPlaying() {
+  if (!manifest) return;
+  playing = true;
+  playBtn.textContent = "⏸";
+  playTimer = setInterval(() => {
+    let next = (parseInt(sliderEl.value, 10) + 1) % manifest.frames.length;
+    sliderEl.value = next;
+    renderFrame(next);
+  }, 600);
+}
+
+function stopPlaying() {
+  playing = false;
+  playBtn.textContent = "▶";
+  clearInterval(playTimer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SELECTOR DE DIES
+// ─────────────────────────────────────────────────────────────────────────
+function updateDaysControl() {
+  if (!manifest || manifest.frames.length < 2) return;
+  const t0 = new Date(manifest.frames[0].time).getTime();
+  const t1 = new Date(manifest.frames[manifest.frames.length - 1].time).getTime();
+  const maxDays = Math.max(1, Math.round((t1 - t0) / 86400000 * 10) / 10);
+  daysSlider.min = 0.5;
+  daysSlider.max = maxDays;
+  daysSlider.step = 0.5;
+  daysSlider.value = maxDays;
+  daysLabel.textContent = `${maxDays} dies`;
+}
+
+daysSlider.addEventListener("input", () => {
+  daysLabel.textContent = `${daysSlider.value} dies`;
+});
+
+function framesInRange(days) {
+  const t0 = new Date(manifest.frames[0].time).getTime();
+  const maxMs = days * 86400000;
+  return manifest.frames.filter(f => (new Date(f.time).getTime() - t0) <= maxMs);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PROJECCIÓ: lon/lat ↔ Web Mercator (mateixa que fan servir els frames)
+// ─────────────────────────────────────────────────────────────────────────
+const EARTH_R = 6378137;
+
+function lonLatToMerc(lon, lat) {
+  const x = EARTH_R * (lon * Math.PI / 180);
+  const y = EARTH_R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2));
+  return [x, y];
+}
+
+function getDomainBoundsMerc() {
+  // el domini és el mateix a tots els frames (mateixa graella d'origen)
+  const b = manifest.frames[0].bounds; // [[latMin,lonMin],[latMax,lonMax]]
+  const [xMin, yMin] = lonLatToMerc(b[0][1], b[0][0]);
+  const [xMax, yMax] = lonLatToMerc(b[1][1], b[1][0]);
+  return { xMin, yMin, xMax, yMax };
+}
+
+function getViewportBoundsMerc() {
+  const b = map.getBounds();
+  const sw = b.getSouthWest(), ne = b.getNorthEast();
+  const [xMin, yMin] = lonLatToMerc(sw.lng, sw.lat);
+  const [xMax, yMax] = lonLatToMerc(ne.lng, ne.lat);
+  return { xMin, yMin, xMax, yMax };
+}
+
+function intersectBounds(a, b) {
+  const xMin = Math.max(a.xMin, b.xMin);
+  const xMax = Math.min(a.xMax, b.xMax);
+  const yMin = Math.max(a.yMin, b.yMin);
+  const yMax = Math.min(a.yMax, b.yMax);
+  if (xMin >= xMax || yMin >= yMax) return null;
+  return { xMin, yMin, xMax, yMax };
+}
+
+function updateCoverageWarning() {
+  if (!manifest) return;
+  const cropOk = intersectBounds(getDomainBoundsMerc(), getViewportBoundsMerc());
+  coverageWarnEl.style.display = cropOk ? "none" : "block";
+  btnViewMosaic.disabled = !cropOk;
+  btnViewGif.disabled = !cropOk;
+}
+
+map.on("moveend zoomend", updateCoverageWarning);
+
+// ─────────────────────────────────────────────────────────────────────────
+// RETALL D'UN FRAME A LA FINESTRA ACTUAL (canvas)
+// ─────────────────────────────────────────────────────────────────────────
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+async function cropFrameToCanvas(frame, domainMerc, cropMerc, destW, destH) {
+  const img = await loadImage(`${manifest._base}/${frame.file}`);
+  const canvas = document.createElement("canvas");
+  canvas.width = destW;
+  canvas.height = destH;
+  const ctx = canvas.getContext("2d");
+
+  const domW = domainMerc.xMax - domainMerc.xMin;
+  const domH = domainMerc.yMax - domainMerc.yMin;
+
+  const sx     = (cropMerc.xMin - domainMerc.xMin) / domW * img.naturalWidth;
+  const sxEnd  = (cropMerc.xMax - domainMerc.xMin) / domW * img.naturalWidth;
+  const syTop  = (domainMerc.yMax - cropMerc.yMax) / domH * img.naturalHeight;
+  const syBot  = (domainMerc.yMax - cropMerc.yMin) / domH * img.naturalHeight;
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, destW, destH);
+  ctx.drawImage(img, sx, syTop, sxEnd - sx, syBot - syTop, 0, 0, destW, destH);
+
+  const label = new Date(frame.time).toLocaleString("ca-ES", {
+    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+  }) + "Z";
+  ctx.font = "bold 15px sans-serif";
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = "rgba(0,0,0,0.72)";
+  ctx.fillRect(6, destH - 26, tw + 12, 20);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, 12, destH - 11);
+
+  return canvas;
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function setStatus(msg) { statusMsgEl.textContent = msg; }
+
+// ─────────────────────────────────────────────────────────────────────────
+// DESCÀRREGA: MOSAIC PNG DE LA VISTA ACTUAL
+// ─────────────────────────────────────────────────────────────────────────
+btnViewMosaic.onclick = async () => {
+  if (!manifest) return;
+  const domainMerc = getDomainBoundsMerc();
+  const cropMerc = intersectBounds(domainMerc, getViewportBoundsMerc());
+  if (!cropMerc) return;
+
+  const days = parseFloat(daysSlider.value);
+  const frames = framesInRange(days);
+  if (frames.length === 0) return;
+
+  const cellW = 260, cellH = 200, titleH = 46;
+  const cols = Math.min(8, frames.length);
+  const rows = Math.ceil(frames.length / cols);
+
+  const outCanvas = document.createElement("canvas");
+  outCanvas.width = cols * cellW;
+  outCanvas.height = rows * cellH + titleH;
+  const ctx = outCanvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+  ctx.fillStyle = "#111";
+  ctx.font = "bold 20px sans-serif";
+  ctx.fillText(`${manifest.title} — vista personalitzada`, 10, 30);
+
+  for (let i = 0; i < frames.length; i++) {
+    setStatus(`Generant mosaic (${i + 1}/${frames.length})...`);
+    const cell = await cropFrameToCanvas(frames[i], domainMerc, cropMerc, cellW - 4, cellH - 4);
+    const r = Math.floor(i / cols), c = i % cols;
+    ctx.strokeStyle = "#ddd";
+    ctx.strokeRect(c * cellW, titleH + r * cellH, cellW, cellH);
+    ctx.drawImage(cell, c * cellW + 2, titleH + r * cellH + 2);
+  }
+
+  outCanvas.toBlob(blob => {
+    triggerDownload(blob, `${currentVar}_vista_${Date.now()}.png`);
+    setStatus("");
+  });
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// DESCÀRREGA: GIF DE LA VISTA ACTUAL
+// ─────────────────────────────────────────────────────────────────────────
+btnViewGif.onclick = async () => {
+  if (!manifest) return;
+  const domainMerc = getDomainBoundsMerc();
+  const cropMerc = intersectBounds(domainMerc, getViewportBoundsMerc());
+  if (!cropMerc) return;
+
+  const days = parseFloat(daysSlider.value);
+  const frames = framesInRange(days);
+  if (frames.length === 0) return;
+
+  setStatus(`Generant GIF (0/${frames.length})...`);
+
+  const gif = new GIF({
+    workers: 2,
+    quality: 10,
+    width: 480,
+    height: 360,
+    workerScript: "./vendor/gif.worker.js",
+  });
+
+  for (let i = 0; i < frames.length; i++) {
+    const canvas = await cropFrameToCanvas(frames[i], domainMerc, cropMerc, 480, 360);
+    gif.addFrame(canvas, { delay: 500 });
+    setStatus(`Generant GIF (${i + 1}/${frames.length})...`);
+  }
+
+  gif.on("finished", blob => {
+    triggerDownload(blob, `${currentVar}_vista_${Date.now()}.gif`);
+    setStatus("");
+  });
+  gif.render();
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// INICI
+// ─────────────────────────────────────────────────────────────────────────
+loadVariable(VARIABLES[0].id);
+</script>
+</body>
+</html>
