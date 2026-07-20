@@ -84,7 +84,7 @@ VARIABLES = {
     ),
 }
 
-OUTPUT_ROOT = Path("/home/pguarque/onofre-viewer/frontend/data")
+OUTPUT_ROOT = Path("/home/pguarque/onofre-viewer/docs/data")
 
 
 # ──────────────────────────────────────────────────────────────────────────

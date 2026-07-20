@@ -16,7 +16,7 @@ CONDA_ENV="graf_env"
 cd "$REPO_DIR"
 git pull --ff-only
 
-# ── 1. Executa el notebook (genera els frames dins $REPO_DIR/frontend/data) ──
+# ── 1. Executa el notebook (genera els frames dins $REPO_DIR/docs/data) ──
 source /home/labfire/miniforge3/etc/profile.d/conda.sh
 conda activate "$CONDA_ENV"
 
@@ -28,7 +28,7 @@ jupyter nbconvert \
 
 # ── 2. Publica al repo ────────────────────────────────────────
 cd "$REPO_DIR"
-git add frontend/data
+git add docs/data
 if git diff --cached --quiet; then
     echo "Sense canvis, no cal fer commit."
 else
