@@ -496,6 +496,42 @@ function tileYToLat(y, z) {
 }
 function mercX(lon) { return 6378137 * lon * Math.PI / 180; }
 function mercY(lat) { return 6378137 * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)); }
+function mercXToLon(x) { return x / 6378137 * 180 / Math.PI; }
+function mercYToLat(y) { return (2 * Math.atan(Math.exp(y / 6378137)) - Math.PI / 2) * 180 / Math.PI; }
+
+/**
+ * Ajusta el crop perquè la seva relació d'aspecte (en Mercator) coincideixi
+ * exactament amb destW/destH, afegint marge simètric a l'eix que calgui
+ * (mai deformant). Sense això, les rajoles del basemap (i la graella)
+ * s'estiraven de manera no uniforme per encaixar en un requadre amb una
+ * proporció diferent — d'aquí la "deformació" del text dels mapes.
+ */
+function adjustCropAspect(crop, destW, destH) {
+  const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
+  const yMinM = mercY(crop.latMin), yMaxM = mercY(crop.latMax);
+  const xSpan = xMaxM - xMinM, ySpan = yMaxM - yMinM;
+  const targetRatio = destW / destH;
+  const currentRatio = xSpan / ySpan;
+
+  let nXMin = xMinM, nXMax = xMaxM, nYMin = yMinM, nYMax = yMaxM;
+
+  if (currentRatio > targetRatio) {
+    const newYSpan = xSpan / targetRatio;
+    const cy = (yMinM + yMaxM) / 2;
+    nYMin = cy - newYSpan / 2;
+    nYMax = cy + newYSpan / 2;
+  } else {
+    const newXSpan = ySpan * targetRatio;
+    const cx = (xMinM + xMaxM) / 2;
+    nXMin = cx - newXSpan / 2;
+    nXMax = cx + newXSpan / 2;
+  }
+
+  return {
+    lonMin: mercXToLon(nXMin), lonMax: mercXToLon(nXMax),
+    latMin: Math.max(-85, mercYToLat(nYMin)), latMax: Math.min(85, mercYToLat(nYMax)),
+  };
+}
 
 function loadTileImage(z, x, y) {
   return new Promise((resolve) => {
@@ -771,8 +807,10 @@ btnViewMosaic.onclick = async () => {
   const cols = Math.min(8, idxs.length);
   const rows = Math.ceil(idxs.length / cols);
 
+  const cropAdj = adjustCropAspect(crop, cellW - 4, cellH - 4);
+
   setStatus("Carregant mapa base...");
-  const basemapTiles = await loadBasemapTiles(crop, cellW - 4, cellH - 4);
+  const basemapTiles = await loadBasemapTiles(cropAdj, cellW - 4, cellH - 4);
 
   const outCanvas = document.createElement("canvas");
   outCanvas.width = cols * cellW;
@@ -788,7 +826,7 @@ btnViewMosaic.onclick = async () => {
     const idx = idxs[n];
     setStatus(`Generant mosaic (${n + 1}/${idxs.length})...`);
     const values = await getFrameValues(idx);
-    const cell = drawGridToCanvas(values, crop, cellW - 4, cellH - 4, timeLabelFor(manifest.frames[idx]), basemapTiles);
+    const cell = drawGridToCanvas(values, cropAdj, cellW - 4, cellH - 4, timeLabelFor(manifest.frames[idx]), basemapTiles);
     const r = Math.floor(n / cols), c = n % cols;
     ctx.strokeStyle = "#ddd";
     ctx.strokeRect(c * cellW, titleH + r * cellH, cellW, cellH);
@@ -823,9 +861,10 @@ btnViewGif.onclick = async () => {
   setStatus(`Generant GIF (0/${idxs.length})...`);
 
   const gifW = 480, gifH = 360, legendStripH = 54;
+  const cropAdj = adjustCropAspect(crop, gifW, gifH);
 
   setStatus("Carregant mapa base...");
-  const basemapTiles = await loadBasemapTiles(crop, gifW, gifH);
+  const basemapTiles = await loadBasemapTiles(cropAdj, gifW, gifH);
 
   const gif = new GIF({
     workers: 2,
@@ -838,7 +877,7 @@ btnViewGif.onclick = async () => {
   for (let n = 0; n < idxs.length; n++) {
     const idx = idxs[n];
     const values = await getFrameValues(idx);
-    const mapCanvas = drawGridToCanvas(values, crop, gifW, gifH, timeLabelFor(manifest.frames[idx]), basemapTiles);
+    const mapCanvas = drawGridToCanvas(values, cropAdj, gifW, gifH, timeLabelFor(manifest.frames[idx]), basemapTiles);
 
     const frameCanvas = document.createElement("canvas");
     frameCanvas.width = gifW;
