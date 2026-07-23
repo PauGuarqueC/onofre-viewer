@@ -41,6 +41,7 @@
   .var-btn.active { background: var(--red); border-color: var(--red); color: #fff; }
 
   #domainNote { font-size: 12px; color: var(--text-dim); margin-top: 6px; max-width: 260px; }
+  #runInfo { font-size: 11px; color: var(--text-dim); margin-top: 4px; font-family: var(--font-mono); }
 
   #legend { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
   .legend-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim);
@@ -91,6 +92,7 @@
   <div class="panel">
     <div id="varSelect"></div>
     <div id="domainNote"></div>
+    <div id="runInfo"></div>
     <div id="legend"></div>
   </div>
 </div>
@@ -258,6 +260,7 @@ let playTimer = null;
 
 const varSelectEl   = document.getElementById("varSelect");
 const domainNoteEl  = document.getElementById("domainNote");
+const runInfoEl      = document.getElementById("runInfo");
 const legendEl      = document.getElementById("legend");
 const sliderEl       = document.getElementById("timeSlider");
 const labelEl        = document.getElementById("timeLabel");
@@ -308,6 +311,7 @@ async function loadVariable(id) {
   await renderFrame(0);
 
   domainNoteEl.textContent = manifest.domain_note || "";
+  runInfoEl.textContent = formatRunLabel(manifest.run);
   renderLegend(manifest.color_bins, manifest.legend_labels);
   updateDaysControl();
   updateCoverageWarning();
@@ -670,6 +674,14 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
   }
 
   return canvas;
+}
+
+function formatRunLabel(runTag) {
+  if (!runTag) return "";
+  const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})$/.exec(runTag);
+  if (!m) return `Run: ${runTag}`;
+  const [, yyyy, mm, dd, hh] = m;
+  return `Run del model ICON-EU: ${dd}/${mm}/${yyyy} ${hh}:00Z`;
 }
 
 function timeLabelFor(frame) {
