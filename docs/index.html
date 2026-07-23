@@ -408,19 +408,28 @@ function updateDaysControl() {
   if (!manifest || manifest.frames.length < 2) return;
   const t0 = new Date(manifest.frames[0].time).getTime();
   const t1 = new Date(manifest.frames[manifest.frames.length - 1].time).getTime();
-  const maxDays = Math.max(0.5, Math.round((t1 - t0) / 86400000 * 10) / 10);
-  daysSlider.min = 0.5;
+  const realSpanDays = (t1 - t0) / 86400000;
+  const maxDays = Math.max(1, Math.ceil(realSpanDays));
+  manifest._maxDays = maxDays;
+  daysSlider.min = 1;
   daysSlider.max = maxDays;
-  daysSlider.step = 0.5;
+  daysSlider.step = 1;
   daysSlider.value = maxDays;
-  daysLabel.textContent = `${maxDays} dies`;
+  daysLabel.textContent = `${maxDays} ${maxDays === 1 ? "dia" : "dies"}`;
 }
 
 daysSlider.addEventListener("input", () => {
-  daysLabel.textContent = `${daysSlider.value} dies`;
+  const v = parseInt(daysSlider.value, 10);
+  daysLabel.textContent = `${v} ${v === 1 ? "dia" : "dies"}`;
 });
 
 function frameIndicesInRange(days) {
+  // Al màxim del slider, inclou TOTS els frames directament — evita que
+  // l'arrodoniment de "maxDays" (mostrat com p.ex. "4.9 dies") deixi fora
+  // les últimes hores per una comparació de temps que just just no hi arriba.
+  if (manifest._maxDays !== undefined && days >= manifest._maxDays - 1e-9) {
+    return manifest.frames.map((_, i) => i);
+  }
   const t0 = new Date(manifest.frames[0].time).getTime();
   const maxMs = days * 86400000;
   const idxs = [];
@@ -468,19 +477,105 @@ map.on("moveend zoomend", updateCoverageWarning);
 // (projecció equirectangular senzilla — mateixa filosofia que els mapes
 // PlateCarree que ja fas servir a plot_time_mosaic_gridspec)
 // ─────────────────────────────────────────────────────────────────────────
-function drawGridToCanvas(frameValues, crop, destW, destH, label) {
+// ─────────────────────────────────────────────────────────────────────────
+// BASEMAP REAL (rajoles de CartoDB) per a les descàrregues — Web Mercator
+// de veritat, no la projecció equirectangular simplificada que fem servir
+// per posicionar les cel·les de la graella al mateix canvas.
+// ─────────────────────────────────────────────────────────────────────────
+const TILE_URL = (z, x, y) => `https://a.basemaps.cartocdn.com/light_all/${z}/${x}/${y}.png`;
+
+function lonToTileX(lon, z) { return (lon + 180) / 360 * Math.pow(2, z); }
+function latToTileY(lat, z) {
+  const rad = lat * Math.PI / 180;
+  return (1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2 * Math.pow(2, z);
+}
+function tileXToLon(x, z) { return x / Math.pow(2, z) * 360 - 180; }
+function tileYToLat(y, z) {
+  const n = Math.PI - 2 * Math.PI * y / Math.pow(2, z);
+  return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+}
+function mercX(lon) { return 6378137 * lon * Math.PI / 180; }
+function mercY(lat) { return 6378137 * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)); }
+
+function loadTileImage(z, x, y) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = TILE_URL(z, x, y);
+  });
+}
+
+/**
+ * Retorna una llista de {img, x, y, w, h} (posició/mida ja en píxels del
+ * canvas de destí) llestes per dibuixar amb ctx.drawImage. Es calcula un
+ * cop per exportació (mateix crop/mida per a tots els frames), no per frame.
+ */
+async function loadBasemapTiles(crop, destW, destH) {
+  const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
+  const yMinM = mercY(crop.latMin), yMaxM = mercY(crop.latMax);
+
+  // tria un zoom tal que la resolució de les rajoles s'aproximi a destW
+  const worldSpanM = 2 * Math.PI * 6378137;
+  let z = Math.round(Math.log2((destW * worldSpanM) / ((xMaxM - xMinM) * 256)));
+  z = Math.max(1, Math.min(15, z));
+
+  const txMin = Math.floor(lonToTileX(crop.lonMin, z));
+  const txMax = Math.floor(lonToTileX(crop.lonMax, z));
+  const tyMin = Math.floor(latToTileY(crop.latMax, z));
+  const tyMax = Math.floor(latToTileY(crop.latMin, z));
+
+  const xForLon = (lo) => (mercX(lo) - xMinM) / (xMaxM - xMinM) * destW;
+  const yForLat = (la) => (yMaxM - mercY(la)) / (yMaxM - yMinM) * destH;
+
+  const tileCoords = [];
+  for (let ty = tyMin; ty <= tyMax; ty++) {
+    for (let tx = txMin; tx <= txMax; tx++) {
+      tileCoords.push([tx, ty]);
+    }
+  }
+  // salvaguarda: no petar-ho a base de fer centenars de peticions
+  const capped = tileCoords.slice(0, 64);
+
+  const results = await Promise.all(capped.map(async ([tx, ty]) => {
+    const wrappedX = ((tx % Math.pow(2, z)) + Math.pow(2, z)) % Math.pow(2, z);
+    const img = await loadTileImage(z, wrappedX, ty);
+    if (!img) return null;
+    const lonW = tileXToLon(tx, z), lonE = tileXToLon(tx + 1, z);
+    const latN = tileYToLat(ty, z), latS = tileYToLat(ty + 1, z);
+    const x1 = xForLon(lonW), x2 = xForLon(lonE);
+    const y1 = yForLat(latN), y2 = yForLat(latS);
+    return { img, x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+  }));
+
+  return results.filter(Boolean);
+}
+
+function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) {
   const canvas = document.createElement("canvas");
   canvas.width = destW; canvas.height = destH;
   const ctx = canvas.getContext("2d");
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, destW, destH);
 
+  if (basemapTiles && basemapTiles.length) {
+    for (const t of basemapTiles) {
+      ctx.drawImage(t.img, t.x, t.y, t.w, t.h);
+    }
+  }
+
   const lon = manifest.lon, lat = manifest.lat;
   const resLon = lon.length > 1 ? lon[1] - lon[0] : 0.0625;
   const resLat = lat.length > 1 ? lat[1] - lat[0] : 0.0625;
 
-  const xForLon = (lo) => (lo - crop.lonMin) / (crop.lonMax - crop.lonMin) * destW;
-  const yForLat = (la) => (crop.latMax - la) / (crop.latMax - crop.latMin) * destH;
+  // Mateixa projecció Web Mercator que fem servir per triar/col·locar les
+  // rajoles del basemap (loadBasemapTiles) — així la graella i el fons
+  // queden alineats de veritat, no una aproximació equirectangular.
+  const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
+  const yMinM = mercY(crop.latMin), yMaxM = mercY(crop.latMax);
+  const xForLon = (lo) => (mercX(lo) - xMinM) / (xMaxM - xMinM) * destW;
+  const yForLat = (la) => (yMaxM - mercY(la)) / (yMaxM - yMinM) * destH;
 
   // Vores compartides (mateix motiu que a GridLayer.draw): evita que
   // cel·les veïnes es solapin o deixin escletxa.
@@ -495,6 +590,7 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label) {
     yPix[i] = Math.round(yForLat(edgeLat));
   }
 
+  ctx.globalAlpha = basemapTiles && basemapTiles.length ? 0.82 : 1;
   for (let i = 0; i < lat.length; i++) {
     const cLat = lat[i];
     if (cLat < crop.latMin - Math.abs(resLat) || cLat > crop.latMax + Math.abs(resLat)) continue;
@@ -516,9 +612,12 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label) {
     }
   }
 
-  // Contorns de costa/fronteres a sobre de les cel·les, perquè el PNG/GIF
-  // no quedi com un requadre de colors sense context geogràfic.
-  if (countryGeoJSON) {
+  ctx.globalAlpha = 1;
+
+  // Contorns de costa/fronteres vectorials nomès com a fallback — si ja
+  // tenim un basemap real (amb costes/fronteres pròpies a la imatge), no
+  // cal duplicar-ho amb el contorn dibuixat a mà.
+  if ((!basemapTiles || !basemapTiles.length) && countryGeoJSON) {
     drawBordersToCanvas(ctx, countryGeoJSON, xForLon, yForLat, crop);
   }
 
@@ -672,6 +771,9 @@ btnViewMosaic.onclick = async () => {
   const cols = Math.min(8, idxs.length);
   const rows = Math.ceil(idxs.length / cols);
 
+  setStatus("Carregant mapa base...");
+  const basemapTiles = await loadBasemapTiles(crop, cellW - 4, cellH - 4);
+
   const outCanvas = document.createElement("canvas");
   outCanvas.width = cols * cellW;
   outCanvas.height = rows * cellH + titleH + legendH;
@@ -686,7 +788,7 @@ btnViewMosaic.onclick = async () => {
     const idx = idxs[n];
     setStatus(`Generant mosaic (${n + 1}/${idxs.length})...`);
     const values = await getFrameValues(idx);
-    const cell = drawGridToCanvas(values, crop, cellW - 4, cellH - 4, timeLabelFor(manifest.frames[idx]));
+    const cell = drawGridToCanvas(values, crop, cellW - 4, cellH - 4, timeLabelFor(manifest.frames[idx]), basemapTiles);
     const r = Math.floor(n / cols), c = n % cols;
     ctx.strokeStyle = "#ddd";
     ctx.strokeRect(c * cellW, titleH + r * cellH, cellW, cellH);
@@ -720,7 +822,10 @@ btnViewGif.onclick = async () => {
 
   setStatus(`Generant GIF (0/${idxs.length})...`);
 
-  const gifW = 480, gifH = 360, legendStripH = 46;
+  const gifW = 480, gifH = 360, legendStripH = 54;
+
+  setStatus("Carregant mapa base...");
+  const basemapTiles = await loadBasemapTiles(crop, gifW, gifH);
 
   const gif = new GIF({
     workers: 2,
@@ -733,7 +838,7 @@ btnViewGif.onclick = async () => {
   for (let n = 0; n < idxs.length; n++) {
     const idx = idxs[n];
     const values = await getFrameValues(idx);
-    const mapCanvas = drawGridToCanvas(values, crop, gifW, gifH, timeLabelFor(manifest.frames[idx]));
+    const mapCanvas = drawGridToCanvas(values, crop, gifW, gifH, timeLabelFor(manifest.frames[idx]), basemapTiles);
 
     const frameCanvas = document.createElement("canvas");
     frameCanvas.width = gifW;
@@ -742,9 +847,13 @@ btnViewGif.onclick = async () => {
     fctx.fillStyle = "#fff";
     fctx.fillRect(0, 0, gifW, gifH + legendStripH);
     fctx.drawImage(mapCanvas, 0, 0);
-    drawLegend(fctx, gifW / 2, gifH + 6, Math.min(420, gifW - 20),
+
+    // Llegenda a l'esquerra, espai reservat pel logo a la dreta — evita
+    // que es xafin en una franja tan estreta.
+    const legendW = 370;
+    drawLegend(fctx, 10 + legendW / 2, gifH + 8, legendW,
                manifest.color_bins, manifest.legend_labels);
-    drawLogo(fctx, gifW, gifH + legendStripH, 26);
+    drawLogo(fctx, gifW, gifH + legendStripH, 24);
 
     gif.addFrame(frameCanvas, { delay: 500 });
     setStatus(`Generant GIF (${n + 1}/${idxs.length})...`);
