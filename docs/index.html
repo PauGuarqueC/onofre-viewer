@@ -482,7 +482,10 @@ map.on("moveend zoomend", updateCoverageWarning);
 // de veritat, no la projecció equirectangular simplificada que fem servir
 // per posicionar les cel·les de la graella al mateix canvas.
 // ─────────────────────────────────────────────────────────────────────────
-const TILE_URL = (z, x, y) => `https://a.basemaps.cartocdn.com/light_all/${z}/${x}/${y}.png`;
+// "Voyager" en comptes de "light_all" nomès per les descàrregues — més
+// contrast i etiquetes de ciutat/regió molt més llegibles sota la capa
+// de dades. El mapa en directe es queda amb light_all (Positron).
+const TILE_URL = (z, x, y) => `https://a.basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`;
 
 function lonToTileX(lon, z) { return (lon + 180) / 360 * Math.pow(2, z); }
 function latToTileY(lat, z) {
@@ -626,7 +629,7 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
     yPix[i] = Math.round(yForLat(edgeLat));
   }
 
-  ctx.globalAlpha = basemapTiles && basemapTiles.length ? 0.82 : 1;
+  ctx.globalAlpha = basemapTiles && basemapTiles.length ? 0.72 : 1;
   for (let i = 0; i < lat.length; i++) {
     const cLat = lat[i];
     if (cLat < crop.latMin - Math.abs(resLat) || cLat > crop.latMax + Math.abs(resLat)) continue;
