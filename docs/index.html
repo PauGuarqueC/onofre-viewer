@@ -293,6 +293,7 @@ async function loadVariable(id) {
   setActiveButton(id);
   currentVar = id;
   stopPlaying();
+  frameCache = {};  // neteja el cache de frames de la variable anterior
 
   const base = `${DATA_ROOT}/${id}/${RUN_TAG}`;
   const res = await fetch(`${base}/manifest.json`);
@@ -303,7 +304,7 @@ async function loadVariable(id) {
 
   sliderEl.max = manifest.frames.length - 1;
   sliderEl.value = 0;
-  renderFrame(0);
+  await renderFrame(0);
 
   domainNoteEl.textContent = manifest.domain_note || "";
   renderLegend(manifest.color_bins, manifest.legend_labels);
@@ -313,7 +314,11 @@ async function loadVariable(id) {
   dlMosaic.href = `${base}/mosaic.png`;
   dlGif.href = `${base}/animation.gif`;
 
-  map.setView(CATALUNYA_CENTER, CATALUNYA_ZOOM);
+  // Nomès centra a Catalunya per a variables que hi són limitades (ROS/FLI).
+  // Les variables europees deixen l'usuari a la vista on estigués.
+  if (manifest.domain === "catalunya") {
+    map.setView(CATALUNYA_CENTER, CATALUNYA_ZOOM);
+  }
 }
 
 function renderLegend(colorBins, labels) {
@@ -334,16 +339,44 @@ function renderLegend(colorBins, labels) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// CACHE DE FRAMES (v4: cada timestep és un fitxer separat, baixat sota
+// demanda — no cal tornar-lo a baixar si ja s'ha vist)
+// ─────────────────────────────────────────────────────────────────────────
+let frameCache = {};
+
+async function getFrameValues(i) {
+  if (frameCache[i]) return frameCache[i];
+  const frame = manifest.frames[i];
+  if (!frame) return null;
+  const res = await fetch(`${manifest._base}/${frame.file}`);
+  const values = await res.json();
+  frameCache[i] = values;
+  return values;
+}
+
+function prefetchFrame(i) {
+  if (!manifest || !manifest.frames[i] || frameCache[i]) return;
+  getFrameValues(i).catch(() => {});  // silenciós, és només una millora de fluïdesa
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // RENDER DE FRAME
 // ─────────────────────────────────────────────────────────────────────────
-function renderFrame(i) {
+async function renderFrame(i) {
   if (!manifest) return;
   const frame = manifest.frames[i];
   if (!frame) return;
-  gridLayer.setFrame(frame.values);
+  const values = await getFrameValues(i);
+  if (!values) return;
+  gridLayer.setFrame(values);
   labelEl.textContent = new Date(frame.time).toLocaleString("ca-ES", {
     day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
   }) + "Z";
+
+  // pre-carrega el següent i l'anterior en segon pla, perquè moure el
+  // slider vagi fluid un cop l'usuari ja n'ha vist algun al voltant
+  prefetchFrame(i + 1);
+  prefetchFrame(i - 1);
 }
 
 sliderEl.addEventListener("input", () => renderFrame(parseInt(sliderEl.value, 10)));
@@ -389,10 +422,14 @@ daysSlider.addEventListener("input", () => {
   daysLabel.textContent = `${daysSlider.value} dies`;
 });
 
-function framesInRange(days) {
+function frameIndicesInRange(days) {
   const t0 = new Date(manifest.frames[0].time).getTime();
   const maxMs = days * 86400000;
-  return manifest.frames.filter(f => (new Date(f.time).getTime() - t0) <= maxMs);
+  const idxs = [];
+  manifest.frames.forEach((f, i) => {
+    if ((new Date(f.time).getTime() - t0) <= maxMs) idxs.push(i);
+  });
+  return idxs;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -512,18 +549,18 @@ function setStatus(msg) { statusMsgEl.textContent = msg; }
 // ─────────────────────────────────────────────────────────────────────────
 // DESCÀRREGA: MOSAIC PNG DE LA VISTA ACTUAL
 // ─────────────────────────────────────────────────────────────────────────
-btnViewMosaic.onclick = () => {
+btnViewMosaic.onclick = async () => {
   if (!manifest) return;
   const crop = getCropBounds();
   if (!crop) return;
 
   const days = parseFloat(daysSlider.value);
-  const frames = framesInRange(days);
-  if (frames.length === 0) return;
+  const idxs = frameIndicesInRange(days);
+  if (idxs.length === 0) return;
 
   const cellW = 260, cellH = 200, titleH = 46;
-  const cols = Math.min(8, frames.length);
-  const rows = Math.ceil(frames.length / cols);
+  const cols = Math.min(8, idxs.length);
+  const rows = Math.ceil(idxs.length / cols);
 
   const outCanvas = document.createElement("canvas");
   outCanvas.width = cols * cellW;
@@ -535,30 +572,36 @@ btnViewMosaic.onclick = () => {
   ctx.font = "bold 20px sans-serif";
   ctx.fillText(`${manifest.title} — vista personalitzada`, 10, 30);
 
-  frames.forEach((frame, i) => {
-    const cell = drawGridToCanvas(frame.values, crop, cellW - 4, cellH - 4, timeLabelFor(frame));
-    const r = Math.floor(i / cols), c = i % cols;
+  for (let n = 0; n < idxs.length; n++) {
+    const idx = idxs[n];
+    setStatus(`Generant mosaic (${n + 1}/${idxs.length})...`);
+    const values = await getFrameValues(idx);
+    const cell = drawGridToCanvas(values, crop, cellW - 4, cellH - 4, timeLabelFor(manifest.frames[idx]));
+    const r = Math.floor(n / cols), c = n % cols;
     ctx.strokeStyle = "#ddd";
     ctx.strokeRect(c * cellW, titleH + r * cellH, cellW, cellH);
     ctx.drawImage(cell, c * cellW + 2, titleH + r * cellH + 2);
-  });
+  }
 
-  outCanvas.toBlob(blob => triggerDownload(blob, `${currentVar}_vista_${Date.now()}.png`));
+  outCanvas.toBlob(blob => {
+    triggerDownload(blob, `${currentVar}_vista_${Date.now()}.png`);
+    setStatus("");
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────
 // DESCÀRREGA: GIF DE LA VISTA ACTUAL
 // ─────────────────────────────────────────────────────────────────────────
-btnViewGif.onclick = () => {
+btnViewGif.onclick = async () => {
   if (!manifest) return;
   const crop = getCropBounds();
   if (!crop) return;
 
   const days = parseFloat(daysSlider.value);
-  const frames = framesInRange(days);
-  if (frames.length === 0) return;
+  const idxs = frameIndicesInRange(days);
+  if (idxs.length === 0) return;
 
-  setStatus(`Generant GIF (0/${frames.length})...`);
+  setStatus(`Generant GIF (0/${idxs.length})...`);
 
   const gif = new GIF({
     workers: 2,
@@ -568,11 +611,13 @@ btnViewGif.onclick = () => {
     workerScript: "./vendor/gif.worker.js",
   });
 
-  frames.forEach((frame, i) => {
-    const canvas = drawGridToCanvas(frame.values, crop, 480, 360, timeLabelFor(frame));
+  for (let n = 0; n < idxs.length; n++) {
+    const idx = idxs[n];
+    const values = await getFrameValues(idx);
+    const canvas = drawGridToCanvas(values, crop, 480, 360, timeLabelFor(manifest.frames[idx]));
     gif.addFrame(canvas, { delay: 500 });
-    setStatus(`Generant GIF (${i + 1}/${frames.length})...`);
-  });
+    setStatus(`Generant GIF (${n + 1}/${idxs.length})...`);
+  }
 
   gif.on("finished", blob => {
     triggerDownload(blob, `${currentVar}_vista_${Date.now()}.gif`);
