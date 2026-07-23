@@ -5,19 +5,22 @@
 <title>ONOFRE — Visor de pronòstic</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0f1418;
-    --panel: #171e24;
-    --border: #2a343c;
-    --text: #e8edf1;
-    --muted: #8fa1ac;
-    --accent: #ff6b35;
+    --bg: #0a1216; --map-bg: #050a0d;
+    --panel: #ffffff; --panel-border: #d5d5d5;
+    --text: #262626; --text-dim: #5a5a5a;
+    --charcoal: #2b2b2b; --charcoal-2: #3c3c3c;
+    --red: #C8102E; --red-dark: #96001f;
+    --font-ui: 'Roboto', sans-serif; --font-mono: 'Roboto Mono', monospace;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-               font-family: "Segoe UI", Roboto, sans-serif; }
-  #map { position: absolute; inset: 0; }
+               font-family: var(--font-ui); }
+  #map { position: absolute; inset: 0; background: var(--map-bg); }
   .grid-canvas-layer { pointer-events: none; }
 
   #topbar {
@@ -26,21 +29,23 @@
     pointer-events: none;
   }
   .panel {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-    padding: 10px 14px; pointer-events: auto; box-shadow: 0 4px 14px rgba(0,0,0,.35);
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px;
+    padding: 10px 14px; pointer-events: auto; box-shadow: 0 3px 10px rgba(0,0,0,.18);
   }
   #varSelect { display: flex; gap: 6px; }
   .var-btn {
-    background: transparent; border: 1px solid var(--border); color: var(--muted);
-    padding: 7px 12px; border-radius: 7px; cursor: pointer; font-size: 13px;
+    background: transparent; border: 1px solid var(--panel-border); color: var(--charcoal);
+    padding: 7px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    font-family: var(--font-ui); font-weight: 500;
   }
-  .var-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .var-btn.active { background: var(--red); border-color: var(--red); color: #fff; }
 
-  #domainNote { font-size: 12px; color: var(--muted); margin-top: 6px; max-width: 260px; }
+  #domainNote { font-size: 12px; color: var(--text-dim); margin-top: 6px; max-width: 260px; }
 
   #legend { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
-  .legend-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; border: 1px solid rgba(255,255,255,.15); }
+  .legend-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim);
+                font-family: var(--font-mono); }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; border: 1px solid rgba(0,0,0,.15); }
 
   #bottombar {
     position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 1000;
@@ -50,30 +55,32 @@
   #timePanel { flex: 1; min-width: 260px; pointer-events: auto; }
   #timeRow { display: flex; align-items: center; gap: 10px; }
   #playBtn {
-    background: var(--accent); border: none; color: #fff; width: 34px; height: 34px;
+    background: var(--red); border: none; color: #fff; width: 34px; height: 34px;
     border-radius: 50%; cursor: pointer; font-size: 14px; flex-shrink: 0;
   }
-  #timeSlider { flex: 1; }
-  #timeLabel { font-size: 13px; color: var(--muted); min-width: 130px; text-align: right; }
+  #playBtn:hover { background: var(--red-dark); }
+  #timeSlider { flex: 1; accent-color: var(--red); }
+  #timeLabel { font-size: 13px; color: var(--text-dim); min-width: 130px; text-align: right;
+               font-family: var(--font-mono); }
 
-  #downloadPanel { pointer-events: auto; display: flex; gap: 8px; }
   .dl-btn {
-    background: transparent; border: 1px solid var(--border); color: var(--text);
-    padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
-    text-decoration: none; display: inline-block; font-family: inherit;
+    background: transparent; border: 1px solid var(--panel-border); color: var(--charcoal);
+    padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    text-decoration: none; display: inline-block; font-family: var(--font-ui); font-weight: 500;
   }
-  .dl-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .dl-btn:disabled { opacity: .35; cursor: not-allowed; }
+  .dl-btn:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
+  .dl-btn:disabled { opacity: .4; cursor: not-allowed; }
 
   #viewportPanel { pointer-events: auto; min-width: 240px; }
-  #viewportPanel h4 { margin: 0 0 8px 0; font-size: 12px; color: var(--muted);
-                       text-transform: uppercase; letter-spacing: .04em; }
+  #viewportPanel h4 { margin: 0 0 8px 0; font-size: 11px; color: var(--text-dim);
+                       text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
   #daysRow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  #daysRow input[type=range] { flex: 1; }
-  #daysLabel { font-size: 12px; color: var(--muted); min-width: 55px; text-align: right; }
+  #daysRow input[type=range] { flex: 1; accent-color: var(--red); }
+  #daysLabel { font-size: 12px; color: var(--text-dim); min-width: 55px; text-align: right;
+               font-family: var(--font-mono); }
   #viewportBtns { display: flex; gap: 8px; }
-  #statusMsg { font-size: 11px; color: var(--accent); margin-top: 6px; min-height: 14px; }
-  #coverageWarn { font-size: 11px; color: #ff9f6b; margin-top: 4px; display: none; }
+  #statusMsg { font-size: 11px; color: var(--red); margin-top: 6px; min-height: 14px; font-family: var(--font-mono); }
+  #coverageWarn { font-size: 11px; color: var(--red-dark); margin-top: 4px; display: none; }
 </style>
 </head>
 <body>
@@ -109,11 +116,7 @@
     </div>
     <div id="statusMsg"></div>
     <div id="coverageWarn">⚠ La vista actual no coincideix amb la cobertura d'aquesta variable.</div>
-  </div>
 
-  <div class="panel" id="downloadPanel">
-    <a class="dl-btn" id="dlMosaic" href="#" download>⬇ Mapa oficial (PNG)</a>
-    <a class="dl-btn" id="dlGif" href="#" download>⬇ Animació oficial (GIF)</a>
   </div>
 </div>
 
@@ -259,8 +262,6 @@ const legendEl      = document.getElementById("legend");
 const sliderEl       = document.getElementById("timeSlider");
 const labelEl        = document.getElementById("timeLabel");
 const playBtn        = document.getElementById("playBtn");
-const dlMosaic        = document.getElementById("dlMosaic");
-const dlGif           = document.getElementById("dlGif");
 const daysSlider      = document.getElementById("daysSlider");
 const daysLabel       = document.getElementById("daysLabel");
 const btnViewMosaic   = document.getElementById("btnViewMosaic");
@@ -310,9 +311,6 @@ async function loadVariable(id) {
   renderLegend(manifest.color_bins, manifest.legend_labels);
   updateDaysControl();
   updateCoverageWarning();
-
-  dlMosaic.href = `${base}/mosaic.png`;
-  dlGif.href = `${base}/animation.gif`;
 
   // Nomès centra a Catalunya per a variables que hi són limitades (ROS/FLI).
   // Les variables europees deixen l'usuari a la vista on estigués.
@@ -518,6 +516,12 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label) {
     }
   }
 
+  // Contorns de costa/fronteres a sobre de les cel·les, perquè el PNG/GIF
+  // no quedi com un requadre de colors sense context geogràfic.
+  if (countryGeoJSON) {
+    drawBordersToCanvas(ctx, countryGeoJSON, xForLon, yForLat, crop);
+  }
+
   if (label) {
     ctx.font = "bold 15px sans-serif";
     const tw = ctx.measureText(label).width;
@@ -534,6 +538,109 @@ function timeLabelFor(frame) {
   return new Date(frame.time).toLocaleString("ca-ES", {
     day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
   }) + "Z";
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// LOGO (cantonada inferior dreta, com al mosaic oficial)
+// ─────────────────────────────────────────────────────────────────────────
+let logoImg = null;
+let logoLoadPromise = null;
+
+function loadLogo() {
+  if (logoImg) return Promise.resolve(logoImg);
+  if (logoLoadPromise) return logoLoadPromise;
+  logoLoadPromise = new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => { logoImg = img; resolve(img); };
+    img.onerror = () => resolve(null);
+    img.src = "./vendor/logo_bombers.png";
+  });
+  return logoLoadPromise;
+}
+
+function drawLogo(ctx, canvasW, canvasH, targetH = 34) {
+  if (!logoImg) return;
+  const ratio = logoImg.width / logoImg.height;
+  const h = targetH;
+  const w = h * ratio;
+  const margin = 10;
+  ctx.drawImage(logoImg, canvasW - w - margin, canvasH - h - margin, w, h);
+}
+function drawLegend(ctx, centerX, y, width, colorBins, labels) {
+  const n = colorBins.length;
+  const segW = width / n;
+  const barH = 20;
+  const x0 = centerX - width / 2;
+
+  for (let i = 0; i < n; i++) {
+    ctx.fillStyle = colorBins[i].color;
+    ctx.fillRect(x0 + i * segW, y, segW, barH);
+    ctx.strokeStyle = "#999";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0 + i * segW, y, segW, barH);
+  }
+
+  ctx.fillStyle = "#111";
+  ctx.font = "12px sans-serif";
+  ctx.textAlign = "center";
+  for (let i = 0; i < n; i++) {
+    const label = (labels && labels[i]) ? labels[i] : String(colorBins[i].max);
+    ctx.fillText(label, x0 + i * segW + segW / 2, y + barH + 16);
+  }
+  ctx.textAlign = "left";
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CONTORNS (costa/fronteres) — nomès per a les descàrregues "vista actual",
+// perquè no quedin com un requadre de colors sense context. El mapa en
+// viu ja té el basemap de Leaflet pel mateix propòsit.
+// ─────────────────────────────────────────────────────────────────────────
+let countryGeoJSON = null;
+
+async function loadCountryBorders() {
+  if (countryGeoJSON) return countryGeoJSON;
+  try {
+    const res = await fetch("./vendor/countries.geojson");
+    countryGeoJSON = await res.json();
+  } catch (e) {
+    countryGeoJSON = { type: "FeatureCollection", features: [] };
+  }
+  return countryGeoJSON;
+}
+
+function drawBordersToCanvas(ctx, geojson, xForLon, yForLat, crop) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(20,20,20,0.6)";
+  ctx.lineWidth = 1;
+  const pad = 2; // marge en graus, per no descartar línies que entren just per la vora
+
+  for (const feature of geojson.features) {
+    const geom = feature.geometry;
+    if (!geom) continue;
+    const polys = geom.type === "Polygon" ? [geom.coordinates]
+                : geom.type === "MultiPolygon" ? geom.coordinates
+                : null;
+    if (!polys) continue;
+
+    for (const poly of polys) {
+      for (const ring of poly) {
+        ctx.beginPath();
+        let started = false;
+        for (const [lon, lat] of ring) {
+          if (lon < crop.lonMin - pad || lon > crop.lonMax + pad ||
+              lat < crop.latMin - pad || lat > crop.latMax + pad) {
+            started = false;
+            continue;
+          }
+          const x = xForLon(lon), y = yForLat(lat);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
 }
 
 function triggerDownload(blob, filename) {
@@ -554,17 +661,20 @@ btnViewMosaic.onclick = async () => {
   const crop = getCropBounds();
   if (!crop) return;
 
+  await loadCountryBorders();
+  await loadLogo();
+
   const days = parseFloat(daysSlider.value);
   const idxs = frameIndicesInRange(days);
   if (idxs.length === 0) return;
 
-  const cellW = 260, cellH = 200, titleH = 46;
+  const cellW = 260, cellH = 200, titleH = 46, legendH = 60;
   const cols = Math.min(8, idxs.length);
   const rows = Math.ceil(idxs.length / cols);
 
   const outCanvas = document.createElement("canvas");
   outCanvas.width = cols * cellW;
-  outCanvas.height = rows * cellH + titleH;
+  outCanvas.height = rows * cellH + titleH + legendH;
   const ctx = outCanvas.getContext("2d");
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
@@ -583,6 +693,10 @@ btnViewMosaic.onclick = async () => {
     ctx.drawImage(cell, c * cellW + 2, titleH + r * cellH + 2);
   }
 
+  drawLegend(ctx, outCanvas.width / 2, titleH + rows * cellH + 18, Math.min(500, outCanvas.width - 40),
+             manifest.color_bins, manifest.legend_labels);
+  drawLogo(ctx, outCanvas.width, outCanvas.height, 40);
+
   outCanvas.toBlob(blob => {
     triggerDownload(blob, `${currentVar}_vista_${Date.now()}.png`);
     setStatus("");
@@ -597,25 +711,42 @@ btnViewGif.onclick = async () => {
   const crop = getCropBounds();
   if (!crop) return;
 
+  await loadCountryBorders();
+  await loadLogo();
+
   const days = parseFloat(daysSlider.value);
   const idxs = frameIndicesInRange(days);
   if (idxs.length === 0) return;
 
   setStatus(`Generant GIF (0/${idxs.length})...`);
 
+  const gifW = 480, gifH = 360, legendStripH = 46;
+
   const gif = new GIF({
     workers: 2,
     quality: 10,
-    width: 480,
-    height: 360,
+    width: gifW,
+    height: gifH + legendStripH,
     workerScript: "./vendor/gif.worker.js",
   });
 
   for (let n = 0; n < idxs.length; n++) {
     const idx = idxs[n];
     const values = await getFrameValues(idx);
-    const canvas = drawGridToCanvas(values, crop, 480, 360, timeLabelFor(manifest.frames[idx]));
-    gif.addFrame(canvas, { delay: 500 });
+    const mapCanvas = drawGridToCanvas(values, crop, gifW, gifH, timeLabelFor(manifest.frames[idx]));
+
+    const frameCanvas = document.createElement("canvas");
+    frameCanvas.width = gifW;
+    frameCanvas.height = gifH + legendStripH;
+    const fctx = frameCanvas.getContext("2d");
+    fctx.fillStyle = "#fff";
+    fctx.fillRect(0, 0, gifW, gifH + legendStripH);
+    fctx.drawImage(mapCanvas, 0, 0);
+    drawLegend(fctx, gifW / 2, gifH + 6, Math.min(420, gifW - 20),
+               manifest.color_bins, manifest.legend_labels);
+    drawLogo(fctx, gifW, gifH + legendStripH, 26);
+
+    gif.addFrame(frameCanvas, { delay: 500 });
     setStatus(`Generant GIF (${n + 1}/${idxs.length})...`);
   }
 
