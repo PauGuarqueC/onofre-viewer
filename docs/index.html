@@ -256,6 +256,39 @@ const GridLayer = L.Layer.extend({
 });
 
 const gridLayer = new GridLayer();
+
+// ─────────────────────────────────────────────────────────────────────────
+// OVERLAY DE FRONTERES AL MAPA EN DIRECTE (països + regions/províncies,
+// gruixos diferents per llegir-ho millor per sobre del basemap)
+// ─────────────────────────────────────────────────────────────────────────
+// Pane pròpia, per sobre de la de les dades (overlayPane, z-index 400) —
+// així els contorns SEMPRE es veuen per sobre de la graella de colors,
+// independentment de l'ordre en què es carreguin les coses.
+map.createPane("bordersPane");
+map.getPane("bordersPane").style.zIndex = 450;
+map.getPane("bordersPane").style.pointerEvents = "none";
+
+async function addBorderOverlays() {
+  try {
+    const [countries, regions] = await Promise.all([
+      fetch("./vendor/countries.geojson", { cache: "force-cache" }).then(r => r.json()),
+      fetch("./vendor/regions.geojson", { cache: "force-cache" }).then(r => r.json()),
+    ]);
+    L.geoJSON(regions, {
+      pane: "bordersPane",
+      style: { color: "#4a4a4a", weight: 0.8, opacity: 0.85, fillOpacity: 0 },
+      interactive: false,
+    }).addTo(map);
+    L.geoJSON(countries, {
+      pane: "bordersPane",
+      style: { color: "#1a1a1a", weight: 1.8, opacity: 1, fillOpacity: 0 },
+      interactive: false,
+    }).addTo(map);
+  } catch (e) {
+    // si falla, el mapa continua funcionant sense l'overlay
+  }
+}
+addBorderOverlays();
 gridLayer.addTo(map);
 
 let currentVar = null;
@@ -674,11 +707,13 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
   ctx.globalAlpha = 1;
   ctx.restore();  // treu el clip del fitRect — la resta (contorns fallback, etiqueta) pot ocupar tot el canvas
 
-  // Contorns de costa/fronteres vectorials nomès com a fallback — si ja
-  // tenim un basemap real (amb costes/fronteres pròpies a la imatge), no
-  // cal duplicar-ho amb el contorn dibuixat a mà.
-  if ((!basemapTiles || !basemapTiles.length) && countryGeoJSON) {
-    drawBordersToCanvas(ctx, countryGeoJSON, xForLon, yForLat, crop);
+  // Contorns de fronteres a sobre de tot (basemap + graella) — regions amb
+  // traç fi, països amb traç més gruixut, per llegir-ho millor.
+  if (regionGeoJSON) {
+    drawBordersToCanvas(ctx, regionGeoJSON, xForLon, yForLat, crop, 0.8, "rgba(74,74,74,0.85)");
+  }
+  if (countryGeoJSON) {
+    drawBordersToCanvas(ctx, countryGeoJSON, xForLon, yForLat, crop, 1.8, "rgba(26,26,26,1)");
   }
 
   if (label) {
@@ -768,11 +803,12 @@ function drawLegend(ctx, centerX, y, width, colorBins, labels) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// CONTORNS (costa/fronteres) — nomès per a les descàrregues "vista actual",
-// perquè no quedin com un requadre de colors sense context. El mapa en
-// viu ja té el basemap de Leaflet pel mateix propòsit.
+// CONTORNS (costa/fronteres, països + regions) — es dibuixen sempre a les
+// descàrregues "vista actual" (mosaic/GIF), a sobre del basemap i la
+// graella, perquè es llegeixi millor el mapa.
 // ─────────────────────────────────────────────────────────────────────────
 let countryGeoJSON = null;
+let regionGeoJSON = null;
 
 async function loadCountryBorders() {
   if (countryGeoJSON) return countryGeoJSON;
@@ -785,10 +821,21 @@ async function loadCountryBorders() {
   return countryGeoJSON;
 }
 
-function drawBordersToCanvas(ctx, geojson, xForLon, yForLat, crop) {
+async function loadRegionBorders() {
+  if (regionGeoJSON) return regionGeoJSON;
+  try {
+    const res = await fetch("./vendor/regions.geojson");
+    regionGeoJSON = await res.json();
+  } catch (e) {
+    regionGeoJSON = { type: "FeatureCollection", features: [] };
+  }
+  return regionGeoJSON;
+}
+
+function drawBordersToCanvas(ctx, geojson, xForLon, yForLat, crop, lineWidth = 1, color = "rgba(20,20,20,0.6)") {
   ctx.save();
-  ctx.strokeStyle = "rgba(20,20,20,0.6)";
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
   const pad = 2; // marge en graus, per no descartar línies que entren just per la vora
 
   for (const feature of geojson.features) {
@@ -839,6 +886,7 @@ btnViewMosaic.onclick = async () => {
   if (!crop) return;
 
   await loadCountryBorders();
+  await loadRegionBorders();
   await loadLogo();
 
   const days = parseFloat(daysSlider.value);
@@ -894,6 +942,7 @@ btnViewGif.onclick = async () => {
   if (!crop) return;
 
   await loadCountryBorders();
+  await loadRegionBorders();
   await loadLogo();
 
   const days = parseFloat(daysSlider.value);
