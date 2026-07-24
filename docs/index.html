@@ -372,7 +372,7 @@ async function renderFrame(i) {
   if (!values) return;
   gridLayer.setFrame(values);
   labelEl.textContent = new Date(frame.time).toLocaleString("ca-ES", {
-    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC"
   }) + "Z";
 
   // pre-carrega el següent i l'anterior en segon pla, perquè moure el
@@ -438,7 +438,7 @@ function frameIndicesInRange(days) {
   const maxMs = days * 86400000;
   const idxs = [];
   manifest.frames.forEach((f, i) => {
-    if ((new Date(f.time).getTime() - t0) <= maxMs) idxs.push(i);
+    if ((new Date(f.time).getTime() - t0) < maxMs) idxs.push(i);
   });
   return idxs;
 }
@@ -684,9 +684,19 @@ function formatRunLabel(runTag) {
   return `Run del model ICON-EU: ${dd}/${mm}/${yyyy} ${hh}:00Z`;
 }
 
+const MONTHS_EN = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+function formatMosaicTitle(manifest) {
+  const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})$/.exec(manifest.run || "");
+  if (!m) return manifest.title;
+  const [, yyyy, mm, dd, hh] = m;
+  const monthName = MONTHS_EN[parseInt(mm, 10) - 1] || mm;
+  return `${manifest.title} - ICON-EU ${dd}${monthName}${yyyy} ${hh}Z`;
+}
+
 function timeLabelFor(frame) {
   return new Date(frame.time).toLocaleString("ca-ES", {
-    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC"
   }) + "Z";
 }
 
@@ -835,7 +845,7 @@ btnViewMosaic.onclick = async () => {
   ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
   ctx.fillStyle = "#111";
   ctx.font = "bold 20px sans-serif";
-  ctx.fillText(`${manifest.title} — vista personalitzada`, 10, 30);
+  ctx.fillText(formatMosaicTitle(manifest), 10, 30);
 
   for (let n = 0; n < idxs.length; n++) {
     const idx = idxs[n];
