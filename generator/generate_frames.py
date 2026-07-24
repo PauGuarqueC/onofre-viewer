@@ -75,7 +75,7 @@ VARIABLES = {
         domain_note="Cobertura Europa (ICON-EU).",
         cmap=cmap_piroc,
         norm=norm_piroc,
-        legend_labels=["1 - Convective plumes", "2 - Overshooting PyroCu", "3 - Resilient PyroCu", "4 - PyroCb"],
+        legend_labels=["1 - PyroCb", "2 - Resilient PyroCu", "3 - Overshooting PyroCu", "4 - Convective plumes"],
         decimals=0,
     ),
     "ros_fli": dict(
