@@ -33,6 +33,13 @@
     padding: 10px 14px; pointer-events: auto; box-shadow: 0 3px 10px rgba(0,0,0,.18);
   }
   #varSelect { display: flex; gap: 6px; }
+  #runSelect { display: flex; gap: 6px; margin-top: 6px; }
+  .run-btn {
+    background: transparent; border: 1px solid var(--panel-border); color: var(--charcoal);
+    padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    font-family: var(--font-mono); font-weight: 500;
+  }
+  .run-btn.active { background: var(--charcoal); border-color: var(--charcoal); color: #fff; }
   .var-btn {
     background: transparent; border: 1px solid var(--panel-border); color: var(--charcoal);
     padding: 7px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
@@ -91,6 +98,7 @@
 <div id="topbar">
   <div class="panel">
     <div id="varSelect"></div>
+    <div id="runSelect"></div>
     <div id="domainNote"></div>
     <div id="runInfo"></div>
     <div id="legend"></div>
@@ -129,7 +137,7 @@
 // CONFIGURACIÓ
 // ─────────────────────────────────────────────────────────────────────────
 const DATA_ROOT = "./data";
-const RUN_TAG = "latest";
+let RUN_TAG = "latest_00";  // es corregeix sol a runDetected() amb el run més recent disponible
 
 const VARIABLES = [
   { id: "complexitat",   label: "Complexitat (Finestra IF)" },
@@ -338,6 +346,48 @@ function setActiveButton(id) {
 // ─────────────────────────────────────────────────────────────────────────
 // CÀRREGA DE VARIABLE (manifest.json amb lon/lat/color_bins/frames)
 // ─────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────
+// SELECTOR DE RUN (00Z / 12Z) — detecta quins hi ha disponibles i mostra
+// per defecte el més recent.
+// ─────────────────────────────────────────────────────────────────────────
+const runSelectEl = document.getElementById("runSelect");
+let availableRuns = [];  // [{tag: "latest_00", run: "20260724_00"}, ...]
+
+async function detectAvailableRuns() {
+  const candidates = ["latest_00", "latest_12"];
+  const found = [];
+  for (const tag of candidates) {
+    try {
+      const res = await fetch(`${DATA_ROOT}/${VARIABLES[0].id}/${tag}/manifest.json`, { cache: "no-store" });
+      if (!res.ok) continue;
+      const m = await res.json();
+      found.push({ tag, run: m.run });
+    } catch (e) { /* aquest run no existeix, es descarta */ }
+  }
+  // el més recent primer (comparant "YYYYMMDD_HH" com a text ja funciona)
+  found.sort((a, b) => (a.run < b.run ? 1 : -1));
+  availableRuns = found;
+
+  if (found.length > 0) RUN_TAG = found[0].tag;
+  renderRunSelector();
+}
+
+function renderRunSelector() {
+  runSelectEl.innerHTML = "";
+  if (availableRuns.length < 2) return;  // nomès un run disponible, no cal selector
+  availableRuns.forEach(r => {
+    const btn = document.createElement("button");
+    btn.className = "run-btn" + (r.tag === RUN_TAG ? " active" : "");
+    btn.textContent = r.tag.endsWith("_12") ? "12Z" : "00Z";
+    btn.onclick = () => {
+      RUN_TAG = r.tag;
+      renderRunSelector();
+      loadVariable(currentVar);
+    };
+    runSelectEl.appendChild(btn);
+  });
+}
+
 async function loadVariable(id) {
   setActiveButton(id);
   currentVar = id;
@@ -1005,7 +1055,7 @@ btnViewGif.onclick = async () => {
 // ─────────────────────────────────────────────────────────────────────────
 // INICI
 // ─────────────────────────────────────────────────────────────────────────
-loadVariable(VARIABLES[0].id);
+detectAvailableRuns().then(() => loadVariable(VARIABLES[0].id));
 </script>
 </body>
 </html>

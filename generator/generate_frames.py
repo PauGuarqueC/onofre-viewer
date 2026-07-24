@@ -266,12 +266,15 @@ def generate_variable(var_id, data_list, lon, lat, times, run_tag,
 
     print(f"[{var_id}] {len(data_list)} frames (JSON) → {out_dir}")
 
-    # ── Publica com a "latest" (el frontend llegeix RUN_TAG="latest") ──
-    latest_dir = OUTPUT_ROOT / var_id / "latest"
+    # ── Publica com a "latest_00" o "latest_12" segons l'hora del run —
+    # així es poden mantenir els dos runs del dia simultàniament, en
+    # comptes que el de les 12Z sobreescrigui sempre el de les 00Z. ──
+    run_hour_str = run_tag.split("_")[-1]  # "00" o "12"
+    latest_dir = OUTPUT_ROOT / var_id / f"latest_{run_hour_str}"
     if latest_dir.exists():
         shutil.rmtree(latest_dir)
     shutil.copytree(out_dir, latest_dir)
-    print(f"[{var_id}] publicat com a 'latest' → {latest_dir}")
+    print(f"[{var_id}] publicat com a 'latest_{run_hour_str}' → {latest_dir}")
 
     return out_dir
 
