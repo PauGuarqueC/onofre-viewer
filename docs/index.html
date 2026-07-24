@@ -518,31 +518,28 @@ function mercYToLat(y) { return (2 * Math.atan(Math.exp(y / 6378137)) - Math.PI 
  * s'estiraven de manera no uniforme per encaixar en un requadre amb una
  * proporció diferent — d'aquí la "deformació" del text dels mapes.
  */
-function adjustCropAspect(crop, destW, destH) {
+/**
+ * En comptes d'ampliar el crop geogràfic perquè encaixi al canvas (cosa
+ * que feia que la descàrrega mostrés MÉS zona de la que hi havia a la
+ * pantalla), calculem un requadre de dibuix DINS del canvas que respecti
+ * l'extensió real — deixant una franja en blanc a un costat si cal, en
+ * comptes de "inventar-se" més mapa.
+ */
+function computeFitRect(crop, destW, destH) {
   const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
   const yMinM = mercY(crop.latMin), yMaxM = mercY(crop.latMax);
-  const xSpan = xMaxM - xMinM, ySpan = yMaxM - yMinM;
-  const targetRatio = destW / destH;
-  const currentRatio = xSpan / ySpan;
+  const cropRatio = (xMaxM - xMinM) / (yMaxM - yMinM);
+  const destRatio = destW / destH;
 
-  let nXMin = xMinM, nXMax = xMaxM, nYMin = yMinM, nYMax = yMaxM;
-
-  if (currentRatio > targetRatio) {
-    const newYSpan = xSpan / targetRatio;
-    const cy = (yMinM + yMaxM) / 2;
-    nYMin = cy - newYSpan / 2;
-    nYMax = cy + newYSpan / 2;
+  let w, h;
+  if (cropRatio > destRatio) {
+    w = destW;
+    h = destW / cropRatio;
   } else {
-    const newXSpan = ySpan * targetRatio;
-    const cx = (xMinM + xMaxM) / 2;
-    nXMin = cx - newXSpan / 2;
-    nXMax = cx + newXSpan / 2;
+    h = destH;
+    w = destH * cropRatio;
   }
-
-  return {
-    lonMin: mercXToLon(nXMin), lonMax: mercXToLon(nXMax),
-    latMin: Math.max(-85, mercYToLat(nYMin)), latMax: Math.min(85, mercYToLat(nYMax)),
-  };
+  return { x: (destW - w) / 2, y: (destH - h) / 2, w, h };
 }
 
 function loadTileImage(z, x, y) {
@@ -563,10 +560,11 @@ function loadTileImage(z, x, y) {
 async function loadBasemapTiles(crop, destW, destH) {
   const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
   const yMinM = mercY(crop.latMin), yMaxM = mercY(crop.latMax);
+  const fit = computeFitRect(crop, destW, destH);
 
-  // tria un zoom tal que la resolució de les rajoles s'aproximi a destW
+  // tria un zoom tal que la resolució de les rajoles s'aproximi al requadre real
   const worldSpanM = 2 * Math.PI * 6378137;
-  let z = Math.round(Math.log2((destW * worldSpanM) / ((xMaxM - xMinM) * 256)));
+  let z = Math.round(Math.log2((fit.w * worldSpanM) / ((xMaxM - xMinM) * 256)));
   z = Math.max(1, Math.min(15, z));
 
   const txMin = Math.floor(lonToTileX(crop.lonMin, z));
@@ -574,8 +572,8 @@ async function loadBasemapTiles(crop, destW, destH) {
   const tyMin = Math.floor(latToTileY(crop.latMax, z));
   const tyMax = Math.floor(latToTileY(crop.latMin, z));
 
-  const xForLon = (lo) => (mercX(lo) - xMinM) / (xMaxM - xMinM) * destW;
-  const yForLat = (la) => (yMaxM - mercY(la)) / (yMaxM - yMinM) * destH;
+  const xForLon = (lo) => fit.x + (mercX(lo) - xMinM) / (xMaxM - xMinM) * fit.w;
+  const yForLat = (la) => fit.y + (yMaxM - mercY(la)) / (yMaxM - yMinM) * fit.h;
 
   const tileCoords = [];
   for (let ty = tyMin; ty <= tyMax; ty++) {
@@ -620,10 +618,15 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
   // Mateixa projecció Web Mercator que fem servir per triar/col·locar les
   // rajoles del basemap (loadBasemapTiles) — així la graella i el fons
   // queden alineats de veritat, no una aproximació equirectangular.
+  // fitRect: dibuixem dins d'un requadre que respecta l'extensió real del
+  // crop (deixant franja en blanc si cal), en comptes d'ampliar el mapa
+  // per omplir tot el canvas — així la descàrrega mostra EXACTAMENT el
+  // que hi havia a la pantalla, ni més ni menys.
   const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
   const yMinM = mercY(crop.latMin), yMaxM = mercY(crop.latMax);
-  const xForLon = (lo) => (mercX(lo) - xMinM) / (xMaxM - xMinM) * destW;
-  const yForLat = (la) => (yMaxM - mercY(la)) / (yMaxM - yMinM) * destH;
+  const fit = computeFitRect(crop, destW, destH);
+  const xForLon = (lo) => fit.x + (mercX(lo) - xMinM) / (xMaxM - xMinM) * fit.w;
+  const yForLat = (la) => fit.y + (yMaxM - mercY(la)) / (yMaxM - yMinM) * fit.h;
 
   // Vores compartides (mateix motiu que a GridLayer.draw): evita que
   // cel·les veïnes es solapin o deixin escletxa.
@@ -837,7 +840,7 @@ btnViewMosaic.onclick = async () => {
   const cols = Math.min(8, idxs.length);
   const rows = Math.ceil(idxs.length / cols);
 
-  const cropAdj = adjustCropAspect(crop, cellW - 4, cellH - 4);
+  const cropAdj = crop;  // ja no cal ampliar-lo: el fitRect intern s'encarrega de no deformar
 
   setStatus("Carregant mapa base...");
   const basemapTiles = await loadBasemapTiles(cropAdj, cellW - 4, cellH - 4);
@@ -891,7 +894,7 @@ btnViewGif.onclick = async () => {
   setStatus(`Generant GIF (0/${idxs.length})...`);
 
   const gifW = 480, gifH = 360, legendStripH = 54;
-  const cropAdj = adjustCropAspect(crop, gifW, gifH);
+  const cropAdj = crop;  // ja no cal ampliar-lo: el fitRect intern s'encarrega de no deformar
 
   setStatus("Carregant mapa base...");
   const basemapTiles = await loadBasemapTiles(cropAdj, gifW, gifH);
