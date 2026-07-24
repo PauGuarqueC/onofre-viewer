@@ -268,31 +268,26 @@ map.createPane("bordersPane");
 map.getPane("bordersPane").style.zIndex = 450;
 map.getPane("bordersPane").style.pointerEvents = "none";
 
-async function addBorderOverlays() {
+async function addSingleBorderLayer(url, style) {
   try {
-    const [countries, nuts2, regions] = await Promise.all([
-      fetch("./vendor/countries.geojson", { cache: "force-cache" }).then(r => r.json()),
-      fetch("./vendor/nuts2.geojson", { cache: "force-cache" }).then(r => r.json()),
-      fetch("./vendor/regions.geojson", { cache: "force-cache" }).then(r => r.json()),
-    ]);
-    L.geoJSON(regions, {
-      pane: "bordersPane",
-      style: { color: "#4a4a4a", weight: 0.35, opacity: 0.7, fillOpacity: 0 },
-      interactive: false,
-    }).addTo(map);
-    L.geoJSON(nuts2, {
-      pane: "bordersPane",
-      style: { color: "#333333", weight: 0.65, opacity: 0.85, fillOpacity: 0 },
-      interactive: false,
-    }).addTo(map);
-    L.geoJSON(countries, {
-      pane: "bordersPane",
-      style: { color: "#1a1a1a", weight: 1.1, opacity: 0.95, fillOpacity: 0 },
-      interactive: false,
-    }).addTo(map);
+    const res = await fetch(url, { cache: "force-cache" });
+    if (!res.ok) throw new Error(`${url}: ${res.status}`);
+    const geojson = await res.json();
+    L.geoJSON(geojson, { pane: "bordersPane", style, interactive: false }).addTo(map);
   } catch (e) {
-    // si falla, el mapa continua funcionant sense l'overlay
+    console.warn("No s'ha pogut carregar la capa de fronteres:", url, e);
   }
+}
+
+function addBorderOverlays() {
+  // Cada capa es carrega independentment — si una falla (p.ex. 404),
+  // les altres dues segueixen funcionant amb normalitat.
+  addSingleBorderLayer("./vendor/regions.geojson",
+    { color: "#444444", weight: 0.55, opacity: 0.85, fillOpacity: 0 });
+  addSingleBorderLayer("./vendor/nuts2.geojson",
+    { color: "#2e2e2e", weight: 0.9, opacity: 0.9, fillOpacity: 0 });
+  addSingleBorderLayer("./vendor/countries.geojson",
+    { color: "#1a1a1a", weight: 1.5, opacity: 1, fillOpacity: 0 });
 }
 addBorderOverlays();
 gridLayer.addTo(map);
@@ -717,13 +712,13 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
   // (províncies) amb traç fi, NUTS2 (comunitats autònomes/regions) amb
   // traç intermedi, països amb traç més gruixut, per llegir-ho millor.
   if (regionGeoJSON) {
-    drawBordersToCanvas(ctx, regionGeoJSON, xForLon, yForLat, crop, 0.5, "rgba(74,74,74,0.8)");
+    drawBordersToCanvas(ctx, regionGeoJSON, xForLon, yForLat, crop, 0.7, "rgba(68,68,68,0.9)");
   }
   if (nuts2GeoJSON) {
-    drawBordersToCanvas(ctx, nuts2GeoJSON, xForLon, yForLat, crop, 0.8, "rgba(51,51,51,0.85)");
+    drawBordersToCanvas(ctx, nuts2GeoJSON, xForLon, yForLat, crop, 1.0, "rgba(46,46,46,0.9)");
   }
   if (countryGeoJSON) {
-    drawBordersToCanvas(ctx, countryGeoJSON, xForLon, yForLat, crop, 1.2, "rgba(26,26,26,0.95)");
+    drawBordersToCanvas(ctx, countryGeoJSON, xForLon, yForLat, crop, 1.6, "rgba(26,26,26,1)");
   }
 
   if (label) {
