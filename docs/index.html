@@ -272,7 +272,7 @@ const bordersRenderer = L.canvas({ pane: "bordersPane" });
 
 async function addSingleBorderLayer(url, style) {
   try {
-    const res = await fetch(url, { cache: "force-cache" });
+    const res = await fetch(url, { cache: "no-cache" });  // revalida sempre amb el servidor
     if (!res.ok) throw new Error(`${url}: ${res.status}`);
     const geojson = await res.json();
     L.geoJSON(geojson, { pane: "bordersPane", renderer: bordersRenderer, style, interactive: false }).addTo(map);
@@ -826,7 +826,7 @@ const nutsGeoJSON = { 0: null, 1: null, 2: null, 3: null };
 async function loadNutsLevel(level) {
   if (nutsGeoJSON[level]) return nutsGeoJSON[level];
   try {
-    const res = await fetch(`./vendor/nuts${level}.geojson`);
+    const res = await fetch(`./vendor/nuts${level}.geojson`, { cache: "no-cache" });
     nutsGeoJSON[level] = await res.json();
   } catch (e) {
     nutsGeoJSON[level] = { type: "FeatureCollection", features: [] };
