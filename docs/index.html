@@ -295,7 +295,7 @@ function addBorderOverlays() {
   addSingleBorderLayer("./vendor/nuts0.geojson",
     { color: "#1a1a1a", weight: 1.6, opacity: 1, fillOpacity: 0 });
 }
-addBorderOverlays();
+// addBorderOverlays();  // desactivat temporalment — reactivar quan hi hagi dades de fronteres bones
 gridLayer.addTo(map);
 
 let currentVar = null;
@@ -841,30 +841,35 @@ function drawBordersToCanvas(ctx, geojson, xForLon, yForLat, crop, lineWidth = 1
   if (dashArray) ctx.setLineDash(dashArray);
   const pad = 2; // marge en graus, per no descartar línies que entren just per la vora
 
+  const drawLine = (coords) => {
+    ctx.beginPath();
+    let started = false;
+    for (const [lon, lat] of coords) {
+      if (lon < crop.lonMin - pad || lon > crop.lonMax + pad ||
+          lat < crop.latMin - pad || lat > crop.latMax + pad) {
+        started = false;
+        continue;
+      }
+      const x = xForLon(lon), y = yForLat(lat);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  };
+
   for (const feature of geojson.features) {
     const geom = feature.geometry;
     if (!geom) continue;
-    const polys = geom.type === "Polygon" ? [geom.coordinates]
-                : geom.type === "MultiPolygon" ? geom.coordinates
-                : null;
-    if (!polys) continue;
 
-    for (const poly of polys) {
-      for (const ring of poly) {
-        ctx.beginPath();
-        let started = false;
-        for (const [lon, lat] of ring) {
-          if (lon < crop.lonMin - pad || lon > crop.lonMax + pad ||
-              lat < crop.latMin - pad || lat > crop.latMax + pad) {
-            started = false;
-            continue;
-          }
-          const x = xForLon(lon), y = yForLat(lat);
-          if (!started) { ctx.moveTo(x, y); started = true; }
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
+    if (geom.type === "Polygon" || geom.type === "MultiPolygon") {
+      const polys = geom.type === "Polygon" ? [geom.coordinates] : geom.coordinates;
+      for (const poly of polys) {
+        for (const ring of poly) drawLine(ring);
       }
+    } else if (geom.type === "LineString") {
+      drawLine(geom.coordinates);
+    } else if (geom.type === "MultiLineString") {
+      for (const line of geom.coordinates) drawLine(line);
     }
   }
   ctx.restore();
@@ -888,7 +893,7 @@ btnViewMosaic.onclick = async () => {
   const crop = getCropBounds();
   if (!crop) return;
 
-  await Promise.all([loadNutsLevel(0), loadNutsLevel(1), loadNutsLevel(2), loadNutsLevel(3)]);
+  // await Promise.all([loadNutsLevel(0), loadNutsLevel(1), loadNutsLevel(2), loadNutsLevel(3)]); // desactivat temporalment
   await loadLogo();
 
   const days = parseFloat(daysSlider.value);
@@ -943,7 +948,7 @@ btnViewGif.onclick = async () => {
   const crop = getCropBounds();
   if (!crop) return;
 
-  await Promise.all([loadNutsLevel(0), loadNutsLevel(1), loadNutsLevel(2), loadNutsLevel(3)]);
+  // await Promise.all([loadNutsLevel(0), loadNutsLevel(1), loadNutsLevel(2), loadNutsLevel(3)]); // desactivat temporalment
   await loadLogo();
 
   const days = parseFloat(daysSlider.value);
