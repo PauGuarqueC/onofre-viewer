@@ -281,13 +281,17 @@ async function addSingleBorderLayer(url, style) {
 
 function addBorderOverlays() {
   // Cada capa es carrega independentment — si una falla (p.ex. 404),
-  // les altres dues segueixen funcionant amb normalitat.
-  addSingleBorderLayer("./vendor/regions.geojson",
-    { color: "#444444", weight: 0.55, opacity: 0.85, fillOpacity: 0 });
+  // les altres tres segueixen funcionant amb normalitat.
+  // Jerarquia NUTS (Eurostat), consistent per a tota la zona ICON-EU:
+  // NUTS3 = províncies, NUTS2 = comunitats/regions, NUTS1 = grans zones, NUTS0 = països.
+  addSingleBorderLayer("./vendor/nuts3.geojson",
+    { color: "#666666", weight: 0.5, opacity: 0.7, fillOpacity: 0 });
   addSingleBorderLayer("./vendor/nuts2.geojson",
-    { color: "#2e2e2e", weight: 0.9, opacity: 0.9, fillOpacity: 0 });
-  addSingleBorderLayer("./vendor/countries.geojson",
-    { color: "#1a1a1a", weight: 1.5, opacity: 1, fillOpacity: 0 });
+    { color: "#8B4513", weight: 1.0, opacity: 0.9, fillOpacity: 0, dashArray: "6,4" });
+  addSingleBorderLayer("./vendor/nuts1.geojson",
+    { color: "#4a4a8a", weight: 1.2, opacity: 0.85, fillOpacity: 0, dashArray: "1,4" });
+  addSingleBorderLayer("./vendor/nuts0.geojson",
+    { color: "#1a1a1a", weight: 1.6, opacity: 1, fillOpacity: 0 });
 }
 addBorderOverlays();
 gridLayer.addTo(map);
@@ -708,17 +712,20 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
   ctx.globalAlpha = 1;
   ctx.restore();  // treu el clip del fitRect — la resta (contorns fallback, etiqueta) pot ocupar tot el canvas
 
-  // Contorns de fronteres a sobre de tot (basemap + graella) — regions
-  // (províncies) amb traç fi, NUTS2 (comunitats autònomes/regions) amb
-  // traç intermedi, països amb traç més gruixut, per llegir-ho millor.
-  if (regionGeoJSON) {
-    drawBordersToCanvas(ctx, regionGeoJSON, xForLon, yForLat, crop, 0.7, "rgba(68,68,68,0.9)");
+  // Contorns de fronteres a sobre de tot (basemap + graella) — jerarquia
+  // NUTS (Eurostat): NUTS3=províncies, NUTS2=comunitats, NUTS1=grans zones,
+  // NUTS0=països, cadascun amb un traç diferent per llegir-ho bé.
+  if (nutsGeoJSON[3]) {
+    drawBordersToCanvas(ctx, nutsGeoJSON[3], xForLon, yForLat, crop, 0.6, "rgba(102,102,102,0.85)");
   }
-  if (nuts2GeoJSON) {
-    drawBordersToCanvas(ctx, nuts2GeoJSON, xForLon, yForLat, crop, 1.0, "rgba(46,46,46,0.9)");
+  if (nutsGeoJSON[2]) {
+    drawBordersToCanvas(ctx, nutsGeoJSON[2], xForLon, yForLat, crop, 1.2, "rgba(139,69,19,0.95)", [6, 4]);
   }
-  if (countryGeoJSON) {
-    drawBordersToCanvas(ctx, countryGeoJSON, xForLon, yForLat, crop, 1.6, "rgba(26,26,26,1)");
+  if (nutsGeoJSON[1]) {
+    drawBordersToCanvas(ctx, nutsGeoJSON[1], xForLon, yForLat, crop, 1.4, "rgba(74,74,138,0.9)", [1, 5]);
+  }
+  if (nutsGeoJSON[0]) {
+    drawBordersToCanvas(ctx, nutsGeoJSON[0], xForLon, yForLat, crop, 1.6, "rgba(26,26,26,1)");
   }
 
   if (label) {
@@ -812,47 +819,24 @@ function drawLegend(ctx, centerX, y, width, colorBins, labels) {
 // descàrregues "vista actual" (mosaic/GIF), a sobre del basemap i la
 // graella, perquè es llegeixi millor el mapa.
 // ─────────────────────────────────────────────────────────────────────────
-let countryGeoJSON = null;
-let regionGeoJSON = null;
-let nuts2GeoJSON = null;
+const nutsGeoJSON = { 0: null, 1: null, 2: null, 3: null };
 
-async function loadCountryBorders() {
-  if (countryGeoJSON) return countryGeoJSON;
+async function loadNutsLevel(level) {
+  if (nutsGeoJSON[level]) return nutsGeoJSON[level];
   try {
-    const res = await fetch("./vendor/countries.geojson");
-    countryGeoJSON = await res.json();
+    const res = await fetch(`./vendor/nuts${level}.geojson`);
+    nutsGeoJSON[level] = await res.json();
   } catch (e) {
-    countryGeoJSON = { type: "FeatureCollection", features: [] };
+    nutsGeoJSON[level] = { type: "FeatureCollection", features: [] };
   }
-  return countryGeoJSON;
+  return nutsGeoJSON[level];
 }
 
-async function loadRegionBorders() {
-  if (regionGeoJSON) return regionGeoJSON;
-  try {
-    const res = await fetch("./vendor/regions.geojson");
-    regionGeoJSON = await res.json();
-  } catch (e) {
-    regionGeoJSON = { type: "FeatureCollection", features: [] };
-  }
-  return regionGeoJSON;
-}
-
-async function loadNuts2Borders() {
-  if (nuts2GeoJSON) return nuts2GeoJSON;
-  try {
-    const res = await fetch("./vendor/nuts2.geojson");
-    nuts2GeoJSON = await res.json();
-  } catch (e) {
-    nuts2GeoJSON = { type: "FeatureCollection", features: [] };
-  }
-  return nuts2GeoJSON;
-}
-
-function drawBordersToCanvas(ctx, geojson, xForLon, yForLat, crop, lineWidth = 1, color = "rgba(20,20,20,0.6)") {
+function drawBordersToCanvas(ctx, geojson, xForLon, yForLat, crop, lineWidth = 1, color = "rgba(20,20,20,0.6)", dashArray = null) {
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = lineWidth;
+  if (dashArray) ctx.setLineDash(dashArray);
   const pad = 2; // marge en graus, per no descartar línies que entren just per la vora
 
   for (const feature of geojson.features) {
@@ -902,9 +886,7 @@ btnViewMosaic.onclick = async () => {
   const crop = getCropBounds();
   if (!crop) return;
 
-  await loadCountryBorders();
-  await loadRegionBorders();
-  await loadNuts2Borders();
+  await Promise.all([loadNutsLevel(0), loadNutsLevel(1), loadNutsLevel(2), loadNutsLevel(3)]);
   await loadLogo();
 
   const days = parseFloat(daysSlider.value);
@@ -959,9 +941,7 @@ btnViewGif.onclick = async () => {
   const crop = getCropBounds();
   if (!crop) return;
 
-  await loadCountryBorders();
-  await loadRegionBorders();
-  await loadNuts2Borders();
+  await Promise.all([loadNutsLevel(0), loadNutsLevel(1), loadNutsLevel(2), loadNutsLevel(3)]);
   await loadLogo();
 
   const days = parseFloat(daysSlider.value);
