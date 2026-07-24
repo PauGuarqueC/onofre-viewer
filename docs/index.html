@@ -605,6 +605,25 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, destW, destH);
 
+  // fitRect: requadre de dibuix dins del canvas que respecta l'extensió
+  // real del crop (deixant franja en blanc si cal), en comptes d'ampliar
+  // el mapa per omplir tot el canvas — així la descàrrega mostra
+  // EXACTAMENT el que hi havia a la pantalla, ni més ni menys.
+  const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
+  const yMinM = mercY(crop.latMin), yMaxM = mercY(crop.latMax);
+  const fit = computeFitRect(crop, destW, destH);
+  const xForLon = (lo) => fit.x + (mercX(lo) - xMinM) / (xMaxM - xMinM) * fit.w;
+  const yForLat = (la) => fit.y + (yMaxM - mercY(la)) / (yMaxM - yMinM) * fit.h;
+
+  // Retalla (clip) tot el que dibuixem d'ara endavant al requadre exacte
+  // del fitRect — sense això, les rajoles del basemap (que es dibuixen
+  // senceres, no cel·la a cel·la) podien sobresortir uns píxels més enllà
+  // del retall real, fent-lo semblar "més zoom" que les dades.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(fit.x, fit.y, fit.w, fit.h);
+  ctx.clip();
+
   if (basemapTiles && basemapTiles.length) {
     for (const t of basemapTiles) {
       ctx.drawImage(t.img, t.x, t.y, t.w, t.h);
@@ -614,19 +633,6 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
   const lon = manifest.lon, lat = manifest.lat;
   const resLon = lon.length > 1 ? lon[1] - lon[0] : 0.0625;
   const resLat = lat.length > 1 ? lat[1] - lat[0] : 0.0625;
-
-  // Mateixa projecció Web Mercator que fem servir per triar/col·locar les
-  // rajoles del basemap (loadBasemapTiles) — així la graella i el fons
-  // queden alineats de veritat, no una aproximació equirectangular.
-  // fitRect: dibuixem dins d'un requadre que respecta l'extensió real del
-  // crop (deixant franja en blanc si cal), en comptes d'ampliar el mapa
-  // per omplir tot el canvas — així la descàrrega mostra EXACTAMENT el
-  // que hi havia a la pantalla, ni més ni menys.
-  const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
-  const yMinM = mercY(crop.latMin), yMaxM = mercY(crop.latMax);
-  const fit = computeFitRect(crop, destW, destH);
-  const xForLon = (lo) => fit.x + (mercX(lo) - xMinM) / (xMaxM - xMinM) * fit.w;
-  const yForLat = (la) => fit.y + (yMaxM - mercY(la)) / (yMaxM - yMinM) * fit.h;
 
   // Vores compartides (mateix motiu que a GridLayer.draw): evita que
   // cel·les veïnes es solapin o deixin escletxa.
@@ -664,6 +670,7 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
   }
 
   ctx.globalAlpha = 1;
+  ctx.restore();  // treu el clip del fitRect — la resta (contorns fallback, etiqueta) pot ocupar tot el canvas
 
   // Contorns de costa/fronteres vectorials nomès com a fallback — si ja
   // tenim un basemap real (amb costes/fronteres pròpies a la imatge), no
