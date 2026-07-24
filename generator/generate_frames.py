@@ -62,21 +62,20 @@ norm_ros   = BoundaryNorm(ros_bounds, cmap_ros.N)
 VARIABLES = {
     "complexitat": dict(
         title="Finestra IF — Complexitat",
-        domain="catalunya",  # el pipeline actual retalla a CAT a la cel·la 2, abans de calcular-ho
-        domain_note="Cobertura Catalunya (el pipeline actual retalla el domini abans de calcular-ho; tècnicament podria ampliar-se a tot ICON-EU).",
+        domain="europe",
+        domain_note="Cobertura Europa (ICON-EU).",
         cmap=cmap_complexitat,
         norm=norm_complexitat,
         legend_labels=["0", "1", "2", "3", "4", "5", "6"],
         decimals=0,
-        transparent_zero=True,  # el 0 (sense activitat) no es dibuixa, es veu el mapa de sota
     ),
     "piroconveccio": dict(
         title="Tipus de piroconvecció",
-        domain="catalunya",
-        domain_note="Cobertura Catalunya (el pipeline actual retalla el domini abans de calcular-ho; tècnicament podria ampliar-se a tot ICON-EU).",
+        domain="europe",
+        domain_note="Cobertura Europa (ICON-EU).",
         cmap=cmap_piroc,
         norm=norm_piroc,
-        legend_labels=["1 - c", "2 - opyroCu", "3 - pyroCu", "4 - pyroCb"],
+        legend_labels=["1 - Convective plumes", "2 - Overshooting PyroCu", "3 - Resilient PyroCu", "4 - PyroCb"],
         decimals=0,
     ),
     "ros_fli": dict(
@@ -209,17 +208,31 @@ def generate_variable(var_id, data_list, lon, lat, times, run_tag,
     mosaic_fn / mosaic_kwargs / mosaic_fig : igual que abans, per generar
                 el PNG "oficial" (estàtic, no zoomable) reutilitzant les
                 teves funcions de plot existents.
+
+    Format de sortida (v4): el manifest.json ja NOMÉS porta metadata
+    (lon, lat, color_bins, llista de fitxers per timestep) — els valors de
+    cada timestep viuen en fitxers separats a frames/f000.json, f001.json...
+    i el navegador els baixa sota demanda (només el timestep que es mira),
+    en comptes de carregar TOT el run d'un cop. Important a escala Europa,
+    on el conjunt complet pot pesar desenes de MB.
     """
     cfg = VARIABLES[var_id]
     out_dir = OUTPUT_ROOT / var_id / run_tag
-    out_dir.mkdir(parents=True, exist_ok=True)
+    frames_dir = out_dir / "frames"
+    if frames_dir.exists():
+        shutil.rmtree(frames_dir)
+    frames_dir.mkdir(parents=True, exist_ok=True)
 
     decimals = cfg.get("decimals", 1)
-    frames = []
-    for arr, t in zip(data_list, times):
-        frames.append({
+    frame_index = []
+    for i, (arr, t) in enumerate(zip(data_list, times)):
+        values = _quantize_grid(arr, decimals)
+        frame_name = f"f{i:03d}.json"
+        with open(frames_dir / frame_name, "w") as f:
+            json.dump(values, f, separators=(",", ":"))
+        frame_index.append({
             "time": pd.Timestamp(t).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "values": _quantize_grid(arr, decimals),
+            "file": f"frames/{frame_name}",
         })
 
     manifest = {
@@ -227,17 +240,16 @@ def generate_variable(var_id, data_list, lon, lat, times, run_tag,
         "title": cfg["title"],
         "domain": cfg["domain"],
         "domain_note": cfg.get("domain_note"),
-        "transparent_zero": cfg.get("transparent_zero", False),
         "run": run_tag,
         "legend_labels": cfg["legend_labels"],
         "color_bins": cmap_to_bins(cfg["cmap"], cfg["norm"]),
         "lon": [round(float(v), 5) for v in lon],
         "lat": [round(float(v), 5) for v in lat],
-        "frames": frames,
+        "frames": frame_index,  # només {time, file} — sense "values" inline
     }
 
     with open(out_dir / "manifest.json", "w") as f:
-        json.dump(manifest, f, separators=(",", ":"))  # compacte, sense espais
+        json.dump(manifest, f, separators=(",", ":"))
 
     # ── Mosaic/GIF "oficials" (estàtics, referència fixa) ──────────────────
     if mosaic_fig is not None:
