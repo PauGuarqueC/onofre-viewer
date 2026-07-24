@@ -268,12 +268,14 @@ map.createPane("bordersPane");
 map.getPane("bordersPane").style.zIndex = 450;
 map.getPane("bordersPane").style.pointerEvents = "none";
 
+const bordersRenderer = L.canvas({ pane: "bordersPane" });
+
 async function addSingleBorderLayer(url, style) {
   try {
     const res = await fetch(url, { cache: "force-cache" });
     if (!res.ok) throw new Error(`${url}: ${res.status}`);
     const geojson = await res.json();
-    L.geoJSON(geojson, { pane: "bordersPane", style, interactive: false }).addTo(map);
+    L.geoJSON(geojson, { pane: "bordersPane", renderer: bordersRenderer, style, interactive: false }).addTo(map);
   } catch (e) {
     console.warn("No s'ha pogut carregar la capa de fronteres:", url, e);
   }
