@@ -300,7 +300,7 @@ async function loadVariable(id) {
   frameCache = {};  // neteja el cache de frames de la variable anterior
 
   const base = `${DATA_ROOT}/${id}/${RUN_TAG}`;
-  const res = await fetch(`${base}/manifest.json`);
+  const res = await fetch(`${base}/manifest.json`, { cache: "no-store" });
   manifest = await res.json();
   manifest._base = base;
 
@@ -350,7 +350,7 @@ async function getFrameValues(i) {
   if (frameCache[i]) return frameCache[i];
   const frame = manifest.frames[i];
   if (!frame) return null;
-  const res = await fetch(`${manifest._base}/${frame.file}`);
+  const res = await fetch(`${manifest._base}/${frame.file}`, { cache: "no-store" });
   const values = await res.json();
   frameCache[i] = values;
   return values;
