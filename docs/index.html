@@ -139,6 +139,20 @@
 const DATA_ROOT = "./data";
 let RUN_TAG = "latest_00";  // es corregeix sol a runDetected() amb el run més recent disponible
 
+// Clau de CARTO Basemaps (obligatòria des d'agost 2026; sense clau les
+// rajoles surten amb la marca "API KEY REQUIRED"). Es demana gratis a
+// carto.com/basemaps/apikey, lligada al domini de GitHub Pages. No és
+// secreta: qualsevol la veu a les peticions de xarxa del navegador.
+const CARTO_KEY = "cb1_2avx_1_d5adbbe30562bdab4c58877d";
+const CARTO_ATTRIBUTION_HTML =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ' +
+  '&copy; <a href="https://carto.com/attributions">CARTO</a>';
+const CARTO_ATTRIBUTION_TEXT = "© OpenStreetMap © CARTO";
+
+// URL de rajoles per a Leaflet ({z}/{x}/{y}/{r} els omple Leaflet)
+const cartoLeafletUrl = (style) =>
+  `https://basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}{r}.png?key=${CARTO_KEY}`;
+
 const VARIABLES = [
   { id: "complexitat",   label: "Complexitat (Finestra IF)" },
   { id: "piroconveccio", label: "Tipus de piroconvecció" },
@@ -166,8 +180,8 @@ const map = L.map("map", {
   zoomDelta: 0.5,   // cada clic al botó +/- o doble clic avança 0.5 en comptes d'1
   wheelPxPerZoomLevel: 100,  // la roda del ratolí també fa passos més suaus
 }).setView(CATALUNYA_CENTER, CATALUNYA_ZOOM);
-L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-  attribution: "&copy; OpenStreetMap &copy; CARTO",
+L.tileLayer(cartoLeafletUrl("light_all"), {
+  attribution: CARTO_ATTRIBUTION_HTML,
   maxZoom: 14,
 }).addTo(map);
 
@@ -344,9 +358,6 @@ function setActiveButton(id) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// CÀRREGA DE VARIABLE (manifest.json amb lon/lat/color_bins/frames)
-// ─────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────
 // SELECTOR DE RUN (00Z / 12Z) — detecta quins hi ha disponibles i mostra
 // per defecte el més recent.
 // ─────────────────────────────────────────────────────────────────────────
@@ -388,6 +399,9 @@ function renderRunSelector() {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// CÀRREGA DE VARIABLE (manifest.json amb lon/lat/color_bins/frames)
+// ─────────────────────────────────────────────────────────────────────────
 async function loadVariable(id) {
   setActiveButton(id);
   currentVar = id;
@@ -572,11 +586,6 @@ function updateCoverageWarning() {
 map.on("moveend zoomend", updateCoverageWarning);
 
 // ─────────────────────────────────────────────────────────────────────────
-// DIBUIX DIRECTE DE LA GRAELLA A UN CANVAS DE MIDA ARBITRÀRIA
-// (projecció equirectangular senzilla — mateixa filosofia que els mapes
-// PlateCarree que ja fas servir a plot_time_mosaic_gridspec)
-// ─────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────
 // BASEMAP REAL (rajoles de CartoDB) per a les descàrregues — Web Mercator
 // de veritat, no la projecció equirectangular simplificada que fem servir
 // per posicionar les cel·les de la graella al mateix canvas.
@@ -584,7 +593,8 @@ map.on("moveend zoomend", updateCoverageWarning);
 // "Voyager" en comptes de "light_all" nomès per les descàrregues — més
 // contrast i etiquetes de ciutat/regió molt més llegibles sota la capa
 // de dades. El mapa en directe es queda amb light_all (Positron).
-const TILE_URL = (z, x, y) => `https://a.basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`;
+const TILE_URL = (z, x, y) =>
+  `https://basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png?key=${CARTO_KEY}`;
 
 function lonToTileX(lon, z) { return (lon + 180) / 360 * Math.pow(2, z); }
 function latToTileY(lat, z) {
@@ -602,18 +612,12 @@ function mercXToLon(x) { return x / 6378137 * 180 / Math.PI; }
 function mercYToLat(y) { return (2 * Math.atan(Math.exp(y / 6378137)) - Math.PI / 2) * 180 / Math.PI; }
 
 /**
- * Ajusta el crop perquè la seva relació d'aspecte (en Mercator) coincideixi
- * exactament amb destW/destH, afegint marge simètric a l'eix que calgui
- * (mai deformant). Sense això, les rajoles del basemap (i la graella)
- * s'estiraven de manera no uniforme per encaixar en un requadre amb una
- * proporció diferent — d'aquí la "deformació" del text dels mapes.
- */
-/**
  * "Cover" (no "contain"): omple sempre el canvas sencer (l'eix vertical
  * -dalt/baix- queda exacte com a la vista actual), i si l'amplada no hi
  * encaixa, es retalla pels costats en comptes de deixar franges en blanc.
  * (Si en algun cas fos l'amplada la que quedés curta, es retallaria per
  * dalt/baix en comptes de banda a banda — mateixa lògica, eix invertit.)
+ * Mai deforma: la relació d'aspecte en Mercator es manté.
  */
 function computeFitRect(crop, destW, destH) {
   const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
@@ -623,7 +627,7 @@ function computeFitRect(crop, destW, destH) {
 
   let w, h;
   if (cropRatio > destRatio) {
-    // el crop és més ample que el dest\u00ed -> omple l'al\u00e7ada sencera,
+    // el crop és més ample que el destí -> omple l'alçada sencera,
     // l'amplada sobresurt i es retalla pels costats
     h = destH;
     w = destH * cropRatio;
@@ -697,10 +701,6 @@ function drawGridToCanvas(frameValues, crop, destW, destH, label, basemapTiles) 
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, destW, destH);
 
-  // fitRect: requadre de dibuix dins del canvas que respecta l'extensió
-  // real del crop (deixant franja en blanc si cal), en comptes d'ampliar
-  // el mapa per omplir tot el canvas — així la descàrrega mostra
-  // EXACTAMENT el que hi havia a la pantalla, ni més ni menys.
   const xMinM = mercX(crop.lonMin), xMaxM = mercX(crop.lonMax);
   const yMinM = mercY(crop.latMin), yMaxM = mercY(crop.latMax);
   const fit = computeFitRect(crop, destW, destH);
@@ -842,6 +842,26 @@ function drawLogo(ctx, canvasW, canvasH, targetH = 34) {
   const margin = 10;
   ctx.drawImage(logoImg, canvasW - w - margin, canvasH - h - margin, w, h);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// ATRIBUCIÓ (© OpenStreetMap © CARTO) a les descàrregues — els termes de
+// CARTO Basemaps demanen que l'atribució es mantingui també a les imatges.
+// (x, y) = cantonada inferior dreta de la caixa.
+// ─────────────────────────────────────────────────────────────────────────
+function drawAttribution(ctx, rightX, bottomY, fontPx = 10) {
+  ctx.save();
+  ctx.font = `${fontPx}px sans-serif`;
+  const tw = ctx.measureText(CARTO_ATTRIBUTION_TEXT).width;
+  const padX = 4, boxH = fontPx + 5;
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  ctx.fillRect(rightX - tw - 2 * padX, bottomY - boxH, tw + 2 * padX, boxH);
+  ctx.fillStyle = "#333";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(CARTO_ATTRIBUTION_TEXT, rightX - padX, bottomY - 2);
+  ctx.restore();
+}
+
 function drawLegend(ctx, centerX, y, width, colorBins, labels) {
   const n = colorBins.length;
   const segW = width / n;
@@ -983,6 +1003,8 @@ btnViewMosaic.onclick = async () => {
   drawLegend(ctx, outCanvas.width / 2, titleH + rows * cellH + 18, Math.min(500, outCanvas.width - 40),
              manifest.color_bins, manifest.legend_labels);
   drawLogo(ctx, outCanvas.width, outCanvas.height, 40);
+  // atribució a la dreta del títol, a la franja superior
+  drawAttribution(ctx, outCanvas.width - 8, titleH - 8, 11);
 
   outCanvas.toBlob(blob => {
     triggerDownload(blob, `${currentVar}_vista_${Date.now()}.png`);
@@ -1033,6 +1055,9 @@ btnViewGif.onclick = async () => {
     fctx.fillStyle = "#fff";
     fctx.fillRect(0, 0, gifW, gifH + legendStripH);
     fctx.drawImage(mapCanvas, 0, 0);
+    // atribució a la cantonada inferior dreta del mapa (l'etiqueta de
+    // temps és a l'esquerra, no es xafen)
+    drawAttribution(fctx, gifW - 4, gifH - 4, 10);
 
     // Llegenda a l'esquerra, espai reservat pel logo a la dreta — evita
     // que es xafin en una franja tan estreta.
