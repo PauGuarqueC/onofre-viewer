@@ -58,6 +58,11 @@ find "$REPO_DIR/docs/data" -mindepth 2 -maxdepth 2 -type d ! -name 'latest_00' !
 AFTER_SIZE=$(du -sh "$REPO_DIR/docs/data" 2>/dev/null | cut -f1)
 echo "✓ Runs antics netejats. Mida docs/data: $BEFORE_SIZE → $AFTER_SIZE"
 
+# ── 2b. Retenció: a l'estat de l'ONOFRE només els últims 7 dies (com l'ICON-EU)
+find "${ONOFRE_ESTAT:-/home/pguarque/prova_ICON_simu}" -maxdepth 1 -type f \
+     \( -name "onofre_fm_*.nc" -o -name "ONOFRE_rothermel_*.nc" \) -mtime +7 -delete
+echo "✓ Retenció de 7 dies aplicada a ${ONOFRE_ESTAT:-/home/pguarque/prova_ICON_simu}"
+
 # ── 3. Publica al repo ───────────────────────────────────────────────────────
 cd "$REPO_DIR"
 git add docs/data
