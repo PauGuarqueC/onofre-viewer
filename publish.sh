@@ -9,24 +9,31 @@
 #   ./publish.sh        -> run de les 00Z (per defecte)
 #   ./publish.sh 12     -> run de les 12Z
 #
-# Pensat per anar-hi via cron a labfire.ctfc.cat (dos cops al dia).
+# Les rutes de dades es llegeixen d'onofre.env (fora del git).
+# Sense onofre.env, el notebook fa servir les rutes d'abans de la migració.
 # ============================================================
 set -euo pipefail
 
 RUN_HOUR="${1:-0}"
 export ONOFRE_RUN_HOUR="$RUN_HOUR"
 
-REPO_DIR="/home/pguarque/onofre-viewer"
-NOTEBOOK="/home/pguarque/GRAF_2026_amb_export.ipynb"
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+NOTEBOOK="$REPO_DIR/notebooks/GRAF_2026_amb_export.ipynb"
 VENV_DIR="/home/pguarque/graf_env"
-LOG_DIR="/home/pguarque/onofre-viewer-logs"
+LOG_DIR="$REPO_DIR/logs"
 LOG_FILE="$LOG_DIR/publish_$(date -u +'%Y%m%d_%H%M')_${RUN_HOUR}Z.log"
+
+if [ -f "$REPO_DIR/onofre.env" ]; then
+  set -a; source "$REPO_DIR/onofre.env"; set +a
+fi
+export ONOFRE_REPO="$REPO_DIR"
 
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "════════════════════════════════════════════════════"
 echo "  Run iniciat: $(date -u +'%Y-%m-%d %H:%M:%SZ')  (run ICON-EU: ${RUN_HOUR}Z)"
+echo "  Repo: $REPO_DIR"
 echo "════════════════════════════════════════════════════"
 
 cd "$REPO_DIR"

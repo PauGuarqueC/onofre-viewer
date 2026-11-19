@@ -89,7 +89,8 @@ VARIABLES = {
     ),
 }
 
-OUTPUT_ROOT = Path("/home/pguarque/onofre-viewer/docs/data")
+import os as _os
+OUTPUT_ROOT = Path(_os.environ.get("ONOFRE_WEB") or Path(__file__).resolve().parent.parent / "docs" / "data")
 
 
 # ──────────────────────────────────────────────────────────────────────────
